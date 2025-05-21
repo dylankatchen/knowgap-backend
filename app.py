@@ -76,8 +76,7 @@ client = AsyncIOMotorClient(
     tls=True,
     tlsAllowInvalidCertificates=True,
     connectTimeoutMS=30000,
-    serverSelectionTimeoutMS=30000,
-    directConnection=True
+    serverSelectionTimeoutMS=30000
 )
 
 db = client[Config.DATABASE]
