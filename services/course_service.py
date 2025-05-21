@@ -82,7 +82,11 @@ async def update_student_quiz_data(course_id, access_token, link):
     
     quizlist, quizname = await get_quizzes(course_id, access_token, clean_link)
 
-    api_url = f'https://{clean_link}/api/v1/courses/{course_id}/enrollments'
+    # Ensure link has https:// protocol
+    if not link.startswith('http'):
+        link = f'https://{link}'
+    
+    api_url = f'{link}/api/v1/courses/{course_id}/enrollments'
     headers = {'Authorization': f'Bearer {access_token}'}
 
     try:
@@ -193,11 +197,13 @@ async def update_quiz_questions_per_course(course_id, access_token, link):
         print("Error:", e)
     return 1
 
-async def update_quiz_reccs(courseid, current_quiz, access_token, link):
-
-
-    """Fetches quiz statistics to identify questions students answered incorrectly, potentially for recommendations."""
-    api_url = f'https://{link}/api/v1/courses/{courseid}/quizzes/{current_quiz}/statistics'
+async def update_quiz_reccs(course_id, quiz_id, access_token, link):
+    """Fetches quiz statistics to identify questions students answered incorrectly."""
+    # Ensure link has https:// protocol
+    if not link.startswith('http'):
+        link = f'https://{link}'
+    
+    api_url = f'{link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/statistics'
     headers = {'Authorization': f'Bearer {access_token}'}
 
     try:
@@ -205,7 +211,7 @@ async def update_quiz_reccs(courseid, current_quiz, access_token, link):
             async with session.get(api_url, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    return {'error': f'Failed to fetch data from API: {error_text}'}, response.status
+                    return {'error': f'Failed to fetch data from API: {error_text}'}
 
                 data = await response.json()
                 question_texts, question_ids, selectors = [], [], []
@@ -213,8 +219,6 @@ async def update_quiz_reccs(courseid, current_quiz, access_token, link):
                 noanswerset = {"multiple_choice_question", "multiple_answers_question", "true_false_question", "short_answer_question", "numerical_question"}
                 answerset = {"fill_in_multiple_blanks_question", "multiple_dropdowns_question", "matching_question"}
                 writtenset = {"calculated_question", "essay_question"}
-
-
 
                 for question_stat in data["quiz_statistics"][0]["question_statistics"]:
                     question_text = BeautifulSoup(question_stat["question_text"], features="html.parser").get_text()
@@ -237,15 +241,11 @@ async def update_quiz_reccs(courseid, current_quiz, access_token, link):
                             if answer["id"] != "ungraded" and not answer["full_credit"]:
                                 selectors[-1] += answer.get("user_ids", [-1])
 
-
-
                 return question_texts, selectors, question_ids
-            
 
     except Exception as e:
-        print("IS IT THIS")
         logger.error("Failed to grab quiz statistics due to: %s", str(e))
-        return {'error': f'Failed to grab quiz statistics due to: {str(e)}'}, 500
+        return {'error': f'Failed to grab quiz statistics due to: {str(e)}'}
 
 async def get_questions_by_course(course_id):
     """Retrieve all questions for a specific course."""

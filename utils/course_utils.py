@@ -52,6 +52,10 @@ async def get_quizzes(course_id, access_token, link):
         'Content-Type': 'application/json'
     }
     
+    # Ensure link has https:// protocol
+    if not link.startswith('http'):
+        link = f'https://{link}'
+    
     url = f"{link}/api/v1/courses/{course_id}/quizzes"
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as response:
@@ -73,6 +77,10 @@ async def get_quiz_questions(course_id, quiz_id, access_token, link):
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
+    
+    # Ensure link has https:// protocol
+    if not link.startswith('http'):
+        link = f'https://{link}'
     
     url = f"{link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/questions"
     async with aiohttp.ClientSession() as session:
