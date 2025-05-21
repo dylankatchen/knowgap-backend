@@ -22,10 +22,10 @@ async def update_context(course_id, course_context):
     """Updates or inserts the course context for a specific course."""
     try:
         result = await course_contexts_collection.update_one(
-            {'courseid': course_id},
+            {'course_id': course_id},
             {
                 '$set': {
-                    'courseid': course_id,
+                    'course_id': course_id,
                     'course_context': course_context,
                 }
             },
@@ -149,12 +149,11 @@ async def update_student_quiz_data(courseid, access_token, link):
 
 
 
-async def update_quiz_questions_per_course(courseid, access_token, link):
+async def update_quiz_questions_per_course(course_id, access_token, link):
+    quizlist, quizname = await get_quizzes(course_id, access_token, link)
 
-    quizlist, quizname = await get_quizzes(courseid,access_token, link)
-
-    api_url = f'https://{link}/api/v1/courses/{courseid}/enrollments'
-    headers ={
+    api_url = f'https://{link}/api/v1/courses/{course_id}/enrollments'
+    headers = {
         'Authorization': f'Bearer {access_token}'
     }
     try:
@@ -164,23 +163,31 @@ async def update_quiz_questions_per_course(courseid, access_token, link):
                     data = await response.json()
                     studentmap = {}
 
-
-                    course_name = await get_course_name(courseid, access_token, link)
-
+                    course_name = await get_course_name(course_id, access_token, link)
                     
                     for x in range(len(quizlist)):
- 
-                        questiontext, questionid = await get_incorrect_question_data(courseid, quizlist[x], access_token, link)
+                        questiontext, questionid = await get_incorrect_question_data(course_id, quizlist[x], access_token, link)
                         # Finally, save to the database.
                         for y in range(len(questiontext)):
                             try:
-                                #print(quizlist[x])
-                                #print(questionid[y])
-                                quizzes_collection.update_one({'quizid': quizlist[x],  'courseid': str(courseid), "course_name": course_name, "questionid": str(questionid[y])}, {"$set": {"quiz_name": quizname[x], "question_text": questiontext[y]}},upsert=True)
+                                quizzes_collection.update_one(
+                                    {
+                                        'quiz_id': str(quizlist[x]),
+                                        'course_id': str(course_id),
+                                        'course_name': course_name,
+                                        'question_id': str(questionid[y])
+                                    },
+                                    {
+                                        "$set": {
+                                            "quiz_name": quizname[x],
+                                            "question_text": questiontext[y]
+                                        }
+                                    },
+                                    upsert=True
+                                )
                             except Exception as e:
                                 print("Error:", e)
     except Exception as e:
-
         print("Error:", e)
     return 1
 
@@ -240,7 +247,7 @@ async def update_quiz_reccs(courseid, current_quiz, access_token, link):
 
 async def get_questions_by_course(course_id):
     """Retrieve all questions for a specific course."""
-    results = await quizzes_collection.find({"courseid": course_id}).to_list(length=None)
+    results = await quizzes_collection.find({"course_id": course_id}).to_list(length=None)
     all_questions = []
 
     for result in results:

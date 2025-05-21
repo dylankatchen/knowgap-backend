@@ -9,7 +9,7 @@ def init_course_routes(app):
     async def update_course_context_route():
         """Route to update course context and trigger video updates."""
         data = await request.get_json()
-        course_id = data.get('courseid')
+        course_id = data.get('course_id')
         course_context = data.get('course_context')
 
         # Log the request data for debugging
@@ -47,7 +47,7 @@ def init_course_routes(app):
     async def update_course_db_route():
         """Route to update database with course quiz information and student data."""
         data = await request.get_json()
-        course_id = data.get('courseid')
+        course_id = data.get('course_id')
         access_token = data.get('access_token')
         link = data.get('link')
 
@@ -64,7 +64,6 @@ def init_course_routes(app):
         if db_result['status'] != 'Success':
             return jsonify({'status': 'Error', 'message': db_result['error']}), 500
 
-
         db_result = await update_quiz_questions_per_course(course_id, access_token, link)
         print(f"Database update result: {db_result}")
         
@@ -77,7 +76,7 @@ def init_course_routes(app):
     async def get_course_quizzes_route():
         """Route to fetch quizzes for a course."""
         data = await request.get_json()
-        course_id = data.get('courseid')
+        course_id = data.get('course_id')
         link = data.get('link')
         access_token = data.get('access_token')
 
@@ -98,17 +97,17 @@ def init_course_routes(app):
     async def get_incorrect_questions_route():
         """Route to fetch incorrect question data for a specific quiz."""
         data = await request.get_json()
-        course_id = data.get('courseid')
-        current_quiz = data.get('quizid')
+        course_id = data.get('course_id')
+        quiz_id = data.get('quiz_id')
         link = data.get('link')
 
         print(f"Received data for fetching incorrect questions: {data}")
 
-        if not course_id or not current_quiz or not link:
+        if not course_id or not quiz_id or not link:
             return jsonify({'error': 'Missing course_id, quiz_id, or link'}), 400
 
         try:
-            question_data = await get_incorrect_question_data(course_id, current_quiz, link)
+            question_data = await get_incorrect_question_data(course_id, quiz_id, link)
             return jsonify({'status': 'Success', 'data': question_data}), 200
         except Exception as e:
             print(f"Error fetching incorrect questions: {e}")

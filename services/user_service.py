@@ -17,7 +17,7 @@ async def get_user(user_id):
     return {
         "_id": user["_id"],
         "auth": decrypted_token,
-        "courseids": user["courseids"],
+        "course_ids": user["course_ids"],
         "link": user["link"]
     }
 
@@ -27,7 +27,7 @@ async def add_user(user_id, access_token, course_ids, link):
 
     await tokens_collection.update_one(
         {'_id': user_id},
-        {"$set": {"auth": encrypted_token, "courseids": course_ids, "link": link}}, 
+        {"$set": {"auth": encrypted_token, "course_ids": course_ids, "link": link}}, 
         upsert=True
     )
 

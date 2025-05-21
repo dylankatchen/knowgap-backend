@@ -87,7 +87,7 @@ quizzes_collection = db[Config.QUIZZES_COLLECTION]
 async def create_indexes():
     try:
         logger.info("Attempting to create MongoDB indexes...")
-        await quizzes_collection.create_index("courseid")
+        await quizzes_collection.create_index("course_id")
         logger.info("Successfully created MongoDB indexes")
     except Exception as e:
         logger.error(f"Failed to create MongoDB indexes: {str(e)}")
@@ -102,14 +102,14 @@ async def scheduled_update():
         logger.info("MongoDB connection successful")
         
         async for token in token_collection.find():
-            courseids = token.get('courseids')
+            course_ids = token.get('course_ids')
             authkey = Config.DB_CONNECTION_STRING
             access_token = decrypt_token(encryption_key, token.get('auth'))
             link = token.get('link').replace("https://", "").replace("http://", "")
             logger.info("Processing token with link: %s", link)
 
-            if all([courseids, access_token, authkey, link]):
-                for course_id in courseids:
+            if all([course_ids, access_token, authkey, link]):
+                for course_id in course_ids:
                     try:
                         await update_student_quiz_data(course_id, access_token, link)
                         await update_quiz_questions_per_course(course_id, access_token, link)
