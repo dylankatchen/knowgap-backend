@@ -26,10 +26,11 @@ logger = logging.getLogger(__name__)
 # Initialize Quart app
 app = Quart(__name__)
 app = cors(app, 
-    allow_origin="https://canvas.instructure.com",  # Only allow requests from Canvas
-    allow_headers=["Content-Type", "Authorization", "Accept"],
+    allow_origin=["https://canvas.instructure.com", "https://gen-ai-prime-3ddeabb35bd7.herokuapp.com"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_credentials=True
+    allow_credentials=True,
+    max_age=3600
 )
 
 # Log incoming requests
