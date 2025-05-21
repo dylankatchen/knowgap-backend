@@ -75,8 +75,8 @@ client = AsyncIOMotorClient(
     Config.DB_CONNECTION_STRING,
     connectTimeoutMS=30000,  # 30 seconds
     serverSelectionTimeoutMS=30000,  # 30 seconds
-    ssl=True,
-    ssl_cert_reqs='CERT_NONE'  # Required for QuotaGuard proxy
+    tls=True,  # Enable TLS/SSL
+    tlsAllowInvalidCertificates=True  # Allow invalid certificates (needed for QuotaGuard)
 )
 
 db = client[Config.DATABASE]
