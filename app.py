@@ -73,10 +73,11 @@ encryption_key = bytes.fromhex(HEX_ENCRYPTION_KEY)
 # Configure MongoDB client
 client = AsyncIOMotorClient(
     Config.DB_CONNECTION_STRING,
-    connectTimeoutMS=30000,  # 30 seconds
-    serverSelectionTimeoutMS=30000,  # 30 seconds
-    tls=True,  # Enable TLS/SSL
-    tlsAllowInvalidCertificates=True  # Allow invalid certificates (needed for QuotaGuard)
+    tls=True,
+    tlsAllowInvalidCertificates=True,
+    connectTimeoutMS=30000,
+    serverSelectionTimeoutMS=30000,
+    directConnection=True
 )
 
 db = client[Config.DATABASE]
@@ -97,6 +98,10 @@ async def create_indexes():
 async def scheduled_update():
     logger.info("Scheduled update started")
     try:
+        # Test MongoDB connection first
+        await db.command('ping')
+        logger.info("MongoDB connection successful")
+        
         async for token in token_collection.find():
             courseids = token.get('courseids')
             authkey = Config.DB_CONNECTION_STRING
@@ -116,7 +121,8 @@ async def scheduled_update():
             else:
                 logger.warning("Missing data for token processing: %s", token)
     except Exception as e:
-        logger.error("Error in scheduled update: %s", e)
+        logger.error("Error in scheduled update: %s", str(e))
+        logger.error("Full error details:", exc_info=True)
 
 async def schedule_updates():
     while True:
