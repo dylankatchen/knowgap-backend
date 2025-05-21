@@ -29,14 +29,16 @@ app = Quart(__name__)
 # Custom CORS middleware
 @app.after_request
 async def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://canvas.instructure.com')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    if request.method == 'OPTIONS':
+        response.headers.add('Access-Control-Allow-Origin', 'https://canvas.instructure.com')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Max-Age', '3600')
     return response
 
 app = cors(app, 
-    allow_origin=["https://canvas.instructure.com", "https://gen-ai-prime-3ddeabb35bd7.herokuapp.com"],
+    allow_origin="https://canvas.instructure.com",
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_credentials=True,

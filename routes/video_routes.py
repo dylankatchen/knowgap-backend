@@ -19,8 +19,11 @@ def init_video_routes(app):
         else:
             return jsonify({"message": "No assessment videos found"}), 404
 
-    @app.route('/get-course-videos', methods=['POST'])
+    @app.route('/get-course-videos', methods=['POST', 'OPTIONS'])
     async def get_course_videos_route():
+        if request.method == 'OPTIONS':
+            return '', 204
+            
         try:
             data = await request.get_json()
             if not data:
