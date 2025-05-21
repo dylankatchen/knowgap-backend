@@ -69,7 +69,16 @@ init_support_routes(app)
 # MongoDB setup
 HEX_ENCRYPTION_KEY = Config.HEX_ENCRYPTION_KEY
 encryption_key = bytes.fromhex(HEX_ENCRYPTION_KEY)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+
+# Configure MongoDB client with QuotaGuard proxy
+client = AsyncIOMotorClient(
+    Config.DB_CONNECTION_STRING,
+    proxyHost=os.getenv('QUOTAGUARDSTATIC_URL', 'proxy.quotaguard.com'),
+    proxyPort=int(os.getenv('QUOTAGUARDSTATIC_PORT', '9293')),
+    ssl=True,
+    ssl_cert_reqs='CERT_NONE'  # Required for QuotaGuard proxy
+)
+
 db = client[Config.DATABASE]
 token_collection = db[Config.TOKENS_COLLECTION]
 quizzes_collection = db[Config.QUIZZES_COLLECTION]
