@@ -25,21 +25,33 @@ def init_video_routes(app):
             return '', 204
             
         try:
+            print("Received request for get-course-videos")
             data = await request.get_json()
+            print(f"Request data: {data}")
+            
             if not data:
+                print("No JSON data received")
                 return jsonify({"error": "No JSON data received"}), 400
                 
             course_id = data.get("course_id")
+            print(f"Course ID: {course_id}")
+            
             if not course_id:
+                print("Missing course_id")
                 return jsonify({"error": "Missing course_id"}), 400
             
+            print("Calling get_course_videos service")
             course_videos = await get_course_videos(course_id)
+            print(f"Service response: {course_videos}")
+            
             if course_videos:
                 return jsonify({"course_videos": course_videos}), 200
             else:
                 return jsonify({"message": "No videos found for this course"}), 404
         except Exception as e:
             print(f"Error in get_course_videos_route: {str(e)}")
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")
             return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
     @app.route('/update-course-videos', methods=['POST'])
