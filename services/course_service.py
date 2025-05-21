@@ -6,6 +6,7 @@ from utils.course_utils import (
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
+from datetime import datetime, timezone
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -152,46 +153,70 @@ async def update_student_quiz_data(course_id, access_token, link):
 
 
 async def update_quiz_questions_per_course(course_id, access_token, link):
-    quizlist, quizname = await get_quizzes(course_id, access_token, link)
-
-    api_url = f'https://{link}/api/v1/courses/{course_id}/enrollments'
-    headers = {
-        'Authorization': f'Bearer {access_token}'
-    }
+    """Updates the database with quiz questions for a course."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    studentmap = {}
+        # Clean the link to remove protocol
+        clean_link = link.replace("https://", "").replace("http://", "")
+        
+        # Get quizzes for the course
+        quizlist, quizname = await get_quizzes(course_id, access_token, clean_link)
+        if not quizlist:
+            logger.warning(f"No quizzes found for course {course_id}")
+            return 1
 
-                    course_name = await get_course_name(course_id, access_token, link)
-                    
-                    for x in range(len(quizlist)):
-                        questiontext, questionid = await get_incorrect_question_data(course_id, quizlist[x], access_token, link)
-                        # Finally, save to the database.
-                        for y in range(len(questiontext)):
-                            try:
-                                quizzes_collection.update_one(
-                                    {
-                                        'quiz_id': str(quizlist[x]),
-                                        'course_id': str(course_id),
-                                        'course_name': course_name,
-                                        'question_id': str(questionid[y])
-                                    },
-                                    {
-                                        "$set": {
-                                            "quiz_name": quizname[x],
-                                            "question_text": questiontext[y]
-                                        }
-                                    },
-                                    upsert=True
-                                )
-                            except Exception as e:
-                                print("Error:", e)
+        # Get course name
+        course_name = await get_course_name(course_id, access_token, clean_link)
+        if not course_name:
+            logger.error(f"Failed to get course name for course {course_id}")
+            return 0
+
+        # Process each quiz
+        for quiz_id, quiz_title in zip(quizlist, quizname):
+            try:
+                # Get questions for this quiz
+                questions = await get_quiz_questions(course_id, quiz_id, access_token, clean_link)
+                if not questions:
+                    logger.warning(f"No questions found for quiz {quiz_id}")
+                    continue
+
+                # Save each question to the database
+                for question in questions:
+                    try:
+                        # Clean question text
+                        question_text = BeautifulSoup(question["question_text"], "html.parser").get_text()
+                        cleaned_text = clean_text(question_text)
+
+                        # Save to database
+                        await quizzes_collection.update_one(
+                            {
+                                'quiz_id': str(quiz_id),
+                                'course_id': str(course_id),
+                                'question_id': str(question["id"])
+                            },
+                            {
+                                "$set": {
+                                    'course_name': course_name,
+                                    'quiz_name': quiz_title,
+                                    'question_text': cleaned_text,
+                                    'question_type': question.get("question_type", "unknown"),
+                                    'updated_at': datetime.now(timezone.utc)
+                                }
+                            },
+                            upsert=True
+                        )
+                    except Exception as e:
+                        logger.error(f"Error saving question {question.get('id')} for quiz {quiz_id}: {e}")
+                        continue
+
+            except Exception as e:
+                logger.error(f"Error processing quiz {quiz_id}: {e}")
+                continue
+
+        return 1
+
     except Exception as e:
-        print("Error:", e)
-    return 1
+        logger.error(f"Error in update_quiz_questions_per_course: {e}")
+        return 0
 
 async def update_quiz_reccs(course_id, quiz_id, access_token, link):
     """Fetches quiz statistics to identify questions students answered incorrectly."""
