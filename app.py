@@ -76,8 +76,14 @@ quizzes_collection = db[Config.QUIZZES_COLLECTION]
 
 # Create indexes
 async def create_indexes():
-    await quizzes_collection.create_index("courseid")
-    logger.info("Created indexes")
+    try:
+        logger.info("Attempting to create MongoDB indexes...")
+        await quizzes_collection.create_index("courseid")
+        logger.info("Successfully created MongoDB indexes")
+    except Exception as e:
+        logger.error(f"Failed to create MongoDB indexes: {str(e)}")
+        # Don't raise the exception - allow the app to continue running
+        # The indexes will be created when MongoDB is available
 
 async def scheduled_update():
     logger.info("Scheduled update started")
@@ -105,14 +111,24 @@ async def scheduled_update():
 
 async def schedule_updates():
     while True:
-        await scheduled_update()
-        await asyncio.sleep(Config.SET_TIMER)  # Config.SET_TIMER for dynamic timing
+        try:
+            await scheduled_update()
+        except Exception as e:
+            logger.error(f"Error in schedule_updates: {str(e)}")
+        await asyncio.sleep(Config.SET_TIMER)
 
 @app.before_serving
 async def startup():
-    logger.info("Starting scheduled updates...")
-    await create_indexes()  # Create indexes before starting the app
-    asyncio.create_task(schedule_updates())  # Start the update loop in the background
+    logger.info("Starting application...")
+    try:
+        # Try to create indexes, but don't fail if it doesn't work
+        await create_indexes()
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}")
+    
+    # Start the update loop in the background
+    asyncio.create_task(schedule_updates())
+    logger.info("Application startup complete")
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False)
