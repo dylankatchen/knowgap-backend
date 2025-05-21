@@ -21,16 +21,23 @@ def init_video_routes(app):
 
     @app.route('/get-course-videos', methods=['POST'])
     async def get_course_videos_route():
-        data = await request.get_json()
-        course_id = data.get("course_id")
-        if not course_id:
-            return jsonify({"error": "Missing course_id"}), 400
-        
-        course_videos = await get_course_videos(course_id)
-        if course_videos:
-            return jsonify({"course_videos": course_videos}), 200
-        else:
-            return jsonify({"message": "No videos found for this course"}), 404
+        try:
+            data = await request.get_json()
+            if not data:
+                return jsonify({"error": "No JSON data received"}), 400
+                
+            course_id = data.get("course_id")
+            if not course_id:
+                return jsonify({"error": "Missing course_id"}), 400
+            
+            course_videos = await get_course_videos(course_id)
+            if course_videos:
+                return jsonify({"course_videos": course_videos}), 200
+            else:
+                return jsonify({"message": "No videos found for this course"}), 404
+        except Exception as e:
+            print(f"Error in get_course_videos_route: {str(e)}")
+            return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
     @app.route('/update-course-videos', methods=['POST'])
     async def update_course_videos_route():
