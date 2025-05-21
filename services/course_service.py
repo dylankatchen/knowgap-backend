@@ -81,17 +81,13 @@ async def update_student_quiz_data(course_id, access_token, link):
     clean_link = link.replace("https://", "").replace("http://", "")
     
     quizlist, quizname = await get_quizzes(course_id, access_token, clean_link)
-
-    # Ensure link has https:// protocol
-    if not link.startswith('http'):
-        link = f'https://{link}'
     
-    api_url = f'{link}/api/v1/courses/{course_id}/enrollments'
+    url = f"https://{clean_link}/api/v1/courses/{course_id}/enrollments"
     headers = {'Authorization': f'Bearer {access_token}'}
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, headers=headers) as response:
+            async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error("Failed to fetch enrollments: %s", error_text)
@@ -199,16 +195,15 @@ async def update_quiz_questions_per_course(course_id, access_token, link):
 
 async def update_quiz_reccs(course_id, quiz_id, access_token, link):
     """Fetches quiz statistics to identify questions students answered incorrectly."""
-    # Ensure link has https:// protocol
-    if not link.startswith('http'):
-        link = f'https://{link}'
+    # Clean the link to remove protocol
+    clean_link = link.replace("https://", "").replace("http://", "")
     
-    api_url = f'{link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/statistics'
+    url = f"https://{clean_link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/statistics"
     headers = {'Authorization': f'Bearer {access_token}'}
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, headers=headers) as response:
+            async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     return {'error': f'Failed to fetch data from API: {error_text}'}
