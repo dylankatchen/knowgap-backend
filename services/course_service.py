@@ -75,13 +75,14 @@ async def get_incorrect_question_data(courseid, currentquiz, access_token, link)
         return {'error': f'Exception occurred: {str(e)}'}, 500
 
 
-async def update_student_quiz_data(courseid, access_token, link):
-
+async def update_student_quiz_data(course_id, access_token, link):
     """Updates the database with quiz information and failed questions per student."""
-    quizlist, quizname = await get_quizzes(courseid, access_token, link)
+    # Clean the link to remove protocol
+    clean_link = link.replace("https://", "").replace("http://", "")
+    
+    quizlist, quizname = await get_quizzes(course_id, access_token, clean_link)
 
-
-    api_url = f'https://{link}/api/v1/courses/{courseid}/enrollments'
+    api_url = f'https://{clean_link}/api/v1/courses/{course_id}/enrollments'
     headers = {'Authorization': f'Bearer {access_token}'}
 
     try:
@@ -90,44 +91,43 @@ async def update_student_quiz_data(courseid, access_token, link):
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error("Failed to fetch enrollments: %s", error_text)
-                    return {'error': f'Failed to fetch enrollments: {error_text}'}, response.status
+                    return {'status': 'Error', 'error': f'Failed to fetch enrollments: {error_text}'}
 
                 data = await response.json()
                 studentmap = {}
 
                 for i, quiz_id in enumerate(quizlist):
-
-                    results = await update_quiz_reccs(courseid, quiz_id, access_token, link)
+                    results = await update_quiz_reccs(course_id, quiz_id, access_token, clean_link)
 
                     if isinstance(results, dict) and 'error' in results:
-                        return results  # Propagate the error if fetching quiz data fails
+                        return {'status': 'Error', 'error': results['error']}
                     
                     question_texts, selectors, question_ids = results
 
                     for j, user_ids in enumerate(selectors):
                         for student_id in user_ids:
                             if student_id != -1:
-                                question_info = {"question": question_texts[j], "questionid": question_ids[j]}
+                                question_info = {"question": question_texts[j], "question_id": question_ids[j]}
                                 if student_id in studentmap:
                                     quiz_found = False
                                     for quiz in studentmap[student_id]:
-                                        if quiz['quizname'] == quizname[i]:
-                                            existing_questions = {q['questionid'] for q in quiz['questions']}
-                                            if question_info['questionid'] not in existing_questions:
+                                        if quiz['quiz_name'] == quizname[i]:
+                                            existing_questions = {q['question_id'] for q in quiz['questions']}
+                                            if question_info['question_id'] not in existing_questions:
                                                 quiz['questions'].append(question_info)
                                             quiz_found = True
                                             break
                                     if not quiz_found:
                                         studentmap[student_id].append({
-                                            "quizname": quizname[i],
-                                            "quizid": quiz_id,
+                                            "quiz_name": quizname[i],
+                                            "quiz_id": quiz_id,
                                             "questions": [question_info],
                                             "used": False
                                         })
                                 else:
                                     studentmap[student_id] = [{
-                                        "quizname": quizname[i],
-                                        "quizid": quiz_id,
+                                        "quiz_name": quizname[i],
+                                        "quiz_id": quiz_id,
                                         "questions": [question_info],
                                         "used": False
                                     }]
@@ -135,16 +135,18 @@ async def update_student_quiz_data(courseid, access_token, link):
                 # Save to database
                 for student_id, quizzes in studentmap.items():
                     try:
-                        students_collection.update_one(
+                        await students_collection.update_one(
                             {'_id': str(student_id)},
-                            {"$set": {str(courseid): quizzes}},
+                            {"$set": {str(course_id): quizzes}},
                             upsert=True
                         )
                     except Exception as e:
                         logger.error("Error updating database for student %s: %s", student_id, e)
+                        return {'status': 'Error', 'error': f'Database update failed: {str(e)}'}
     except Exception as e:
         logger.error("Error in update_student_quiz_data: %s", e)
-        return {'error': str(e)}, 500
+        return {'status': 'Error', 'error': str(e)}
+    
     return {'status': 'Success', 'message': 'Database update completed successfully'}
 
 

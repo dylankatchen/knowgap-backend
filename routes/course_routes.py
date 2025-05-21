@@ -61,16 +61,17 @@ def init_course_routes(app):
         db_result = await update_student_quiz_data(course_id, access_token, link)
         print(f"Database update result: {db_result}")
 
-        if db_result['status'] != 'Success':
-            return jsonify({'status': 'Error', 'message': db_result['error']}), 500
+        if db_result.get('status') == 'Error':
+            return jsonify({'status': 'Error', 'message': db_result.get('error')}), 500
 
-        db_result = await update_quiz_questions_per_course(course_id, access_token, link)
-        print(f"Database update result: {db_result}")
+        # Update quiz questions
+        quiz_result = await update_quiz_questions_per_course(course_id, access_token, link)
+        print(f"Quiz update result: {quiz_result}")
         
-        if db_result == 1:
-            return jsonify({'status': 'Success', 'message': db_result['message']}), 200
+        if quiz_result == 1:
+            return jsonify({'status': 'Success', 'message': 'Course database updated successfully'}), 200
         else:
-            return jsonify({'status': 'Error', 'message': db_result['error']}), 500
+            return jsonify({'status': 'Error', 'message': 'Failed to update quiz questions'}), 500
 
     @app.route('/get-course-quizzes', methods=['POST'])
     async def get_course_quizzes_route():
