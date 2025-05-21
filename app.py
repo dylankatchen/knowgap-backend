@@ -72,6 +72,12 @@ encryption_key = bytes.fromhex(HEX_ENCRYPTION_KEY)
 client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
 db = client[Config.DATABASE]
 token_collection = db[Config.TOKENS_COLLECTION]
+quizzes_collection = db[Config.QUIZZES_COLLECTION]
+
+# Create indexes
+async def create_indexes():
+    await quizzes_collection.create_index("courseid")
+    logger.info("Created indexes")
 
 async def scheduled_update():
     logger.info("Scheduled update started")
@@ -105,6 +111,7 @@ async def schedule_updates():
 @app.before_serving
 async def startup():
     logger.info("Starting scheduled updates...")
+    await create_indexes()  # Create indexes before starting the app
     asyncio.create_task(schedule_updates())  # Start the update loop in the background
 
 if __name__ == "__main__":

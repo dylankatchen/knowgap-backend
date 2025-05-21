@@ -65,23 +65,45 @@ async def get_assessment_videos(student_id, course_id):
 
 async def get_course_videos(course_id):
     """Fetch all video data associated with a specific course ID."""
-    course_videos = []
-    async for quiz in quizzes_collection.find({"courseid": course_id}):
-        video_data = quiz.get('video_data')
-        core_topic = quiz.get('core_topic')
-        question_text = quiz.get('question_text')
-        quiz_id = quiz.get('quizid')
-        question_id = quiz.get('questionid')
+    try:
+        print(f"Starting get_course_videos for course_id: {course_id}")
+        # Add index hint and limit the fields we're retrieving
+        projection = {
+            'video_data': 1,
+            'core_topic': 1,
+            'question_text': 1,
+            'quizid': 1,
+            'questionid': 1,
+            '_id': 0  # Exclude _id field
+        }
         
-        if video_data:
-            course_videos.append({
-                'quiz_id' : quiz_id,
-                "question_id": question_id,
-                'core_topic': core_topic,
-                'question_text': question_text,
-                'video_data': video_data
-            })
-    return course_videos
+        # Use find().to_list() instead of async for to get all results at once
+        quizzes = await quizzes_collection.find(
+            {"courseid": course_id},
+            projection=projection
+        ).to_list(length=None)
+        
+        print(f"Found {len(quizzes)} quizzes for course {course_id}")
+        
+        course_videos = []
+        for quiz in quizzes:
+            video_data = quiz.get('video_data')
+            if video_data:  # Only add if there's video data
+                course_videos.append({
+                    'quiz_id': quiz.get('quizid'),
+                    'question_id': quiz.get('questionid'),
+                    'core_topic': quiz.get('core_topic'),
+                    'question_text': quiz.get('question_text'),
+                    'video_data': video_data
+                })
+        
+        print(f"Returning {len(course_videos)} videos")
+        return course_videos
+    except Exception as e:
+        print(f"Error in get_course_videos: {str(e)}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        return []
 
 async def update_videos_for_filter(filter_criteria=None):
     """Update videos for all questions that match the filter criteria. Updates all videos in DB if no criteria provided."""
