@@ -26,24 +26,29 @@ logger = logging.getLogger(__name__)
 # Initialize Quart app
 app = Quart(__name__)
 
-# Custom CORS middleware
-@app.after_request
-async def after_request(response):
-    if request.method == 'OPTIONS':
-        response.headers.add('Access-Control-Allow-Origin', 'https://canvas.instructure.com')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Max-Age', '3600')
-    return response
-
+# Configure CORS
 app = cors(app, 
-    allow_origin="https://canvas.instructure.com",
+    allow_origin=[
+        "chrome-extension://*",  # Allow all Chrome extensions
+        "https://canvas.instructure.com",  # Allow Canvas
+        "https://webcourses.ucf.edu"  # Allow UCF Canvas
+    ],
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_credentials=True,
     max_age=3600
 )
+
+# Custom CORS middleware for additional headers
+@app.after_request
+async def after_request(response):
+    # Add additional CORS headers
+    response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    response.headers.add('Access-Control-Max-Age', '3600')
+    return response
 
 # Log incoming requests
 @app.before_request
