@@ -1,4 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient
+from utils.course_utils import get_quiz_questions, get_course_name, clean_text, get_incorrect_user_ids, get_quizzes
 from config import Config
 from utils.course_utils import (
     get_course_name, clean_text, get_incorrect_user_ids, get_quizzes
