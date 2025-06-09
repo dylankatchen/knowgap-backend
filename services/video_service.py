@@ -30,11 +30,11 @@ async def get_assessment_videos(student_id, course_id):
 
     for quiz in quizzes:
         quiz_name = quiz.get('quiz_name', 'Unknown Quiz')
-        quiz_id = quiz.get('quiz_id')
+        quiz_id = quiz.get('quizid')
         incorrect_questions = quiz.get('questions', [])
 
         for question in incorrect_questions:
-            question_data = await quizzes_collection.find_one({"quiz_id": quiz_id, "question_id": question.get("question_id")})
+            question_data = await quizzes_collection.find_one({"quizid": int(quiz_id), "questionid": str(question.get("questionid"))})
             if question_data:
                 core_topic = question_data.get("core_topic", "No topic found")
                 video_data = question_data.get('video_data')  # Expecting a single video dictionary, not a list
@@ -53,7 +53,7 @@ async def get_assessment_videos(student_id, course_id):
                     used_video_links.add(video_data['link'])
                     res.append({
                         "quiz_name": quiz_name,
-                        "question_id": question_data.get("question_id"),
+                        "questionid": question_data.get("questionid"),
                         "question_text": question_data.get("question_text"),
                         "topic": core_topic,
                         "video": video_data  # Store a single video dictionary
@@ -70,14 +70,14 @@ async def get_course_videos(course_id):
             'video_data': 1,
             'core_topic': 1,
             'question_text': 1,
-            'quiz_id': 1,
-            'question_id': 1,
+            'quizid': 1,
+            'questionid': 1,
             '_id': 0  # Exclude _id field
         }
         
         # Use find().to_list() instead of async for to get all results at once
         quizzes = await quizzes_collection.find(
-            {"course_id": course_id},
+            {"courseid": course_id},
             projection=projection
         ).to_list(length=None)
         
@@ -88,8 +88,8 @@ async def get_course_videos(course_id):
             video_data = quiz.get('video_data')
             if video_data:  # Only add if there's video data
                 course_videos.append({
-                    'quiz_id': quiz.get('quiz_id'),
-                    'question_id': quiz.get('question_id'),
+                    'quizid': quiz.get('quizid'),
+                    'questionid': quiz.get('questionid'),
                     'core_topic': quiz.get('core_topic'),
                     'question_text': quiz.get('question_text'),
                     'video_data': video_data
@@ -124,7 +124,7 @@ async def update_videos_for_filter(filter_criteria=None):
         video_data = await fetch_video_for_topic(core_topic)
 
         await quizzes_collection.update_one(
-            {'question_id': question.get("question_id")},
+            {'questionid': question.get("questionid")},
             {'$set': {'core_topic': core_topic, 'video_data': video_data}},
             upsert=True
         )
@@ -133,13 +133,13 @@ async def update_videos_for_filter(filter_criteria=None):
 
 async def update_course_videos(course_id):
     """Updates videos for all questions within a specific course ID."""
-    filter_criteria = {'course_id': course_id}
+    filter_criteria = {'courseid': course_id}
     return await update_videos_for_filter(filter_criteria)
 
 async def update_video_link(quiz_id, question_id, new_video_url):
     """Updates a specific video link within the video's data for a question."""
     # Fetch document
-    document = await quizzes_collection.find_one({"quiz_id": quiz_id, "question_id": question_id})
+    document = await quizzes_collection.find_one({"quizid": int(quiz_id), "questionid": str(question_id)})
     
     if not document:
         return {"message": "Document not found", "success": False}
@@ -151,7 +151,7 @@ async def update_video_link(quiz_id, question_id, new_video_url):
 
     # Update database
     update_result = await quizzes_collection.update_one(
-        {"quiz_id": quiz_id, "question_id": question_id},
+        {"quizid": int(quiz_id), "questionid": str(question_id)},
         {"$set": {"video_data": new_video_metadata}}
     )
 
@@ -162,14 +162,14 @@ async def update_video_link(quiz_id, question_id, new_video_url):
 
 async def add_video(quiz_id, question_id, video_link):
     """Adds a new video link and metadata to a question, avoiding duplicates."""
-    document = await quizzes_collection.find_one({"quiz_id": quiz_id, "question_id": question_id})
+    document = await quizzes_collection.find_one({"quizid": int(quiz_id), "questionid": str(question_id)})
     
     if not document:
         return {"message": "Document not found", "success": False}
 
     video_data = document.get('video_data', {})
 
-    if video_data["link"] == video_link:
+    if video_data.get("link") == video_link:
          return {"message": "Link already exists for this question.", "success": True}
     
     # Add new video metadata
@@ -179,7 +179,7 @@ async def add_video(quiz_id, question_id, video_link):
 
     # Update document
     await quizzes_collection.update_one(
-        {"quiz_id": quiz_id, "question_id": question_id},
+        {"quizid": int(quiz_id), "questionid": str(question_id)},
         {"$set": {"video_data": new_video_metadata}}
     )
     
@@ -187,13 +187,13 @@ async def add_video(quiz_id, question_id, video_link):
 
 async def remove_video(quiz_id, question_id):
     """Removes a specific video by link from a question's video data."""
-    document = await quizzes_collection.find_one({"quiz_id": quiz_id, "question_id": question_id})
+    document = await quizzes_collection.find_one({"quizid": int(quiz_id), "questionid": str(question_id)})
     
     if not document:
         return {"message": "Document not found", "success": False}
 
     await quizzes_collection.update_one(
-        {"quiz_id": quiz_id, "question_id": question_id},
+        {"quizid": int(quiz_id), "questionid": str(question_id)},
         {"$set": {"video_data": {}}}
     )
     
