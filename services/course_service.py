@@ -190,9 +190,9 @@ async def update_quiz_questions_per_course(course_id, access_token, link):
                         # Save to database
                         await quizzes_collection.update_one(
                             {
-                                'quiz_id': str(quiz_id),
-                                'course_id': str(course_id),
-                                'question_id': str(question["id"])
+                                'quizid': int(quiz_id),
+                                'courseid': str(course_id),
+                                'questionid': str(question["id"])
                             },
                             {
                                 "$set": {
@@ -270,7 +270,7 @@ async def update_quiz_reccs(course_id, quiz_id, access_token, link):
 
 async def get_questions_by_course(course_id):
     """Retrieve all questions for a specific course."""
-    results = await quizzes_collection.find({"course_id": course_id}).to_list(length=None)
+    results = await quizzes_collection.find({"courseid": course_id}).to_list(length=None)
     all_questions = []
 
     for result in results:

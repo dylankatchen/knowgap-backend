@@ -111,7 +111,7 @@ async def update_videos_for_filter(filter_criteria=None):
         if not question_text or question.get('video_data'):
             continue
 
-        course_id = question.get('course_id')
+        course_id = question.get('courseid')
         course_name = question.get('course_name', "")
 
         # Fetch context data and core topic
@@ -168,6 +168,7 @@ async def add_video(quiz_id, question_id, video_link):
         return {"message": "Document not found", "success": False}
 
     video_data = document.get('video_data', {})
+    course_id = document.get('courseid')  # Get the course_id from the document
 
     if video_data.get("link") == video_link:
          return {"message": "Link already exists for this question.", "success": True}
@@ -177,10 +178,13 @@ async def add_video(quiz_id, question_id, video_link):
     if "error" in new_video_metadata:
         return {"message": "Failed to fetch metadata for the video", "success": False}
 
-    # Update document
+    # Update document with courseid
     await quizzes_collection.update_one(
         {"quizid": int(quiz_id), "questionid": str(question_id)},
-        {"$set": {"video_data": new_video_metadata}}
+        {"$set": {
+            "video_data": new_video_metadata,
+            "courseid": course_id  # Ensure courseid is set
+        }}
     )
     
     return {"message": "Video added successfully", "success": True}
