@@ -26,6 +26,12 @@ class Config:
     STUDENTS_COLLECTION = "Students"
     COURSES_COLLECTION = "Courses"
     CONTEXTS_COLLECTION = "Course Contexts"
+    
+    # AchieveUp collection names
+    ACHIEVEUP_DATA_COLLECTION = "AchieveUp_Data"
+    SKILL_MATRICES_COLLECTION = "Skill_Matrices"
+    BADGES_COLLECTION = "Badges"
+    SKILL_PROGRESS_COLLECTION = "Skill_Progress"
 
     @classmethod
     def check_config(cls):
