@@ -15,6 +15,7 @@ from routes.user_routes import init_user_routes
 from routes.video_routes import init_video_routes
 from routes.support_routes import init_support_routes
 from routes.course_routes import init_course_routes
+from routes.achieveup_routes import init_achieveup_routes
 
 from config import Config
 
@@ -63,6 +64,7 @@ init_user_routes(app)
 init_course_routes(app)
 init_video_routes(app)
 init_support_routes(app)
+init_achieveup_routes(app)
 
 # Apply CORS after routes are initialized
 
