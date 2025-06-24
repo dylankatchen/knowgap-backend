@@ -86,6 +86,7 @@ def init_course_routes(app):
             print(f"Failed to update quiz questions for course {course_id}")
             return jsonify({'status': 'Error', 'message': quiz_result.get('error', 'Failed to update quiz questions')}), 500
         '''
+        return jsonify({'status': 'Success', 'message': 'Course database updated successfully'}), 200
 
     @app.route('/get-course-quizzes', methods=['POST'])
     async def get_course_quizzes_route():
