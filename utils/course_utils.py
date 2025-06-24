@@ -46,29 +46,35 @@ def extract_answer_set_user_ids(answer_sets):
                         for user_id in (answer.get("user_ids") or [-1]))
     return user_ids
 async def get_quizzes(course_id, access_token, link):
-    """Fetch quizzes for a course."""
+    """Fetch all quizzes for a course, handling pagination."""
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
-    
-    # Clean the link to remove protocol
     clean_link = link.replace("https://", "").replace("http://", "")
-    
     url = f"https://{clean_link}/api/v1/courses/{course_id}/quizzes"
+    quiz_list = []
+    quiz_names = {}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as response:
-            if response.status == 200:
-                quizzes = await response.json()
-                quiz_list = []
-                quiz_names = {}
-                for quiz in quizzes:
-                    quiz_id = str(quiz['id'])  # Convert to string
-                    quiz_list.append(quiz_id)
-                    quiz_names[quiz_id] = quiz['title']
-                return quiz_list, quiz_names
-            else:
-                raise Exception(f"Failed to fetch quizzes: {response.status}")
+        while url:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    quizzes = await response.json()
+                    for quiz in quizzes:
+                        quiz_id = str(quiz['id'])
+                        quiz_list.append(quiz_id)
+                        quiz_names[quiz_id] = quiz['title']
+                    # Handle pagination
+                    link_header = response.headers.get('Link')
+                    if link_header and 'rel="next"' in link_header:
+                        import re
+                        match = re.search(r'<([^>]+)>; rel="next"', link_header)
+                        url = match.group(1) if match else None
+                    else:
+                        url = None
+                else:
+                    raise Exception(f"Failed to fetch quizzes: {response.status}")
+    return quiz_list, quiz_names
 
 async def get_quiz_questions(course_id, quiz_id, access_token, link):
     """Fetch questions for a specific quiz."""
@@ -81,13 +87,29 @@ async def get_quiz_questions(course_id, quiz_id, access_token, link):
     clean_link = link.replace("https://", "").replace("http://", "")
     
     url = f"https://{clean_link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/questions"
+    
+    #print(f"Attempting to fetch questions from: {url}")
+    #print(f"Using headers: {headers}")
+    
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as response:
+            #print(f"Response status: {response.status}")
+            #print(f"Response headers: {dict(response.headers)}")
+            
             if response.status == 200:
                 questions = await response.json()
+                #print(f"Successfully fetched {len(questions)} questions for quiz {quiz_id}")
                 return questions
+            elif response.status == 403:
+                error_text = await response.text()
+                #print(f"403 Forbidden error for quiz {quiz_id}. Response: {error_text}")
+                #print(f"This likely means the access token doesn't have permission to view quiz questions")
+                #print(f"or the quiz is unpublished/restricted")
+                raise Exception(f"403 Forbidden - No permission to access quiz questions. Response: {error_text}")
             else:
-                raise Exception(f"Failed to fetch questions: {response.status}")
+                error_text = await response.text()
+                #print(f"Failed to fetch questions for quiz {quiz_id}. Status: {response.status}, Response: {error_text}")
+                raise Exception(f"Failed to fetch questions: {response.status} - {error_text}")
 
 async def get_incorrect_question_data(course_id, quiz_id, link):
     """Fetch incorrect question data for a specific quiz."""
