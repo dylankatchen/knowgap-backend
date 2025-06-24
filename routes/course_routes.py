@@ -1,7 +1,7 @@
 from quart import request, jsonify
 from services.course_service import update_context, update_student_quiz_data, get_incorrect_question_data, get_questions_by_course, update_quiz_reccs, update_quiz_questions_per_course, get_student_grade, get_student_profile, sync_all_quizzes_questions
 from services.video_service import update_course_videos
-from utils.course_utils import get_quizzes 
+from utils.course_utils import get_quizzes
 from quart_cors import cors
 
 def init_course_routes(app):
