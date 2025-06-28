@@ -17,54 +17,105 @@ quizzes_collection = db[Config.QUIZZES_COLLECTION]
 contexts_collection = db[Config.CONTEXTS_COLLECTION]  # For course context data
 
 async def get_assessment_videos(student_id, course_id):
-    """Retrieve incorrect questions and associated video links for assessments."""
+    """Show all recommended videos for quizzes the student has submissions for, regardless of missed questions."""
+    # print(f"Getting assessment videos for student {student_id} in course {course_id}")
+    
     student_record = await students_collection.find_one({"_id": student_id})
     if not student_record:
+        # print(f"Student {student_id} not found in database")
         return {"error": "Student not found"}
 
+    # print(f"Found student record: {student_record}")
     quizzes = student_record.get(course_id, [])
+    # print(f"Found {len(quizzes)} quizzes for student in course")
+    
+    # Get watched videos for this student/course from the root watched_videos dict
+    watched_videos = student_record.get("watched_videos", {}).get(str(course_id), [])
     used_video_links = set()
-    video_data_new = {}
-
     res = []
 
     for quiz in quizzes:
         quiz_name = quiz.get('quiz_name', 'Unknown Quiz')
-        quiz_id = quiz.get('quizid')
-        incorrect_questions = quiz.get('questions', [])
+        quiz_id = quiz.get('quiz_id')
+        # print(f"Processing quiz {quiz_name} ({quiz_id}) for all questions")
 
-        for question in incorrect_questions:
-            question_data = await quizzes_collection.find_one({"quizid": int(quiz_id), "questionid": str(question.get("questionid"))})
-            if question_data:
-                core_topic = question_data.get("core_topic", "No topic found")
-                video_data = question_data.get('video_data')  # Expecting a single video dictionary, not a list
-            
-                matching_core_topic_data = find_documents_by_field("Quiz Questions", "core_topic", core_topic)
-                for doc in matching_core_topic_data:
-                    matching_video_data = doc.get("video_data")
-                    if matching_video_data:
-                        video_data = matching_video_data
-                        break
+        # --- NEW LOGIC: Recommend all videos for all questions in quizzes with submissions ---
+        questions_cursor = quizzes_collection.find({"quizid": int(quiz_id), "courseid": str(course_id)})
+        questions = await questions_cursor.to_list(length=None)
+        # print(f"Found {len(questions)} questions for quiz {quiz_id}")
 
-                if isinstance(video_data, list) and len(video_data) > 0:
-                    video_data = video_data[0]  # Extract the first video dictionary from the list
+        for question_data in questions:
+            core_topic = question_data.get("core_topic", "No topic found")
+            video_data = question_data.get('video_data')
+            # print(f"Question has core topic: {core_topic} and video data: {video_data}")
 
-                if video_data and video_data['link'] not in used_video_links:
-                    used_video_links.add(video_data['link'])
-                    res.append({
-                        "quiz_name": quiz_name,
-                        "questionid": question_data.get("questionid"),
-                        "question_text": question_data.get("question_text"),
-                        "topic": core_topic,
-                        "video": video_data  # Store a single video dictionary
-                    })
+            if isinstance(video_data, list) and len(video_data) > 0:
+                video_data = video_data[0]
+                # print(f"Extracted first video from list")
 
+            if video_data and video_data.get('link') and video_data['link'] not in used_video_links:
+                used_video_links.add(video_data['link'])
+                res.append({
+                    "quiz_name": quiz_name,
+                    "questionid": question_data.get("questionid"),
+                    "question_text": question_data.get("question_text"),
+                    "topic": core_topic,
+                    "video": video_data,
+                    "watched": video_data['link'] in watched_videos
+                })
+                # print(f"Added video recommendation for question")
+            else:
+                print(f"No video data found or duplicate for question {question_data.get('questionid')}")
+
+        # --- END NEW LOGIC ---
+
+        # --- OLD LOGIC: Recommend videos only for missed questions (commented out) ---
+        # incorrect_questions = quiz.get('questions', [])
+        # print(f"Processing quiz {quiz_name} with {len(incorrect_questions)} incorrect questions")
+        # for question in incorrect_questions:
+        #     print(f"Looking for question data for quiz {quiz_id}, question {question.get('question_id')}")
+        #     question_data = await quizzes_collection.find_one({
+        #         "quizid": int(quiz_id), 
+        #         "questionid": str(question.get("question_id"))
+        #     })
+        #     if question_data:
+        #         print(f"Found question data: {question_data}")
+        #         core_topic = question_data.get("core_topic", "No topic found")
+        #         video_data = question_data.get('video_data')
+        #         print(f"Question has core topic: {core_topic} and video data: {video_data}")
+        #         if not video_data:
+        #             print(f"No video data found, searching for matching core topic")
+        #             matching_core_topic_data = find_documents_by_field("Quiz Questions", "core_topic", core_topic)
+        #             for doc in matching_core_topic_data:
+        #                 matching_video_data = doc.get("video_data")
+        #                 if matching_video_data:
+        #                     video_data = matching_video_data
+        #                     print(f"Found matching video data from core topic")
+        #                     break
+        #         if isinstance(video_data, list) and len(video_data) > 0:
+        #             video_data = video_data[0]
+        #             print(f"Extracted first video from list")
+        #         if video_data and video_data.get('link') and video_data['link'] not in used_video_links:
+        #             used_video_links.add(video_data['link'])
+        #             res.append({
+        #                 "quiz_name": quiz_name,
+        #                 "questionid": question_data.get("questionid"),
+        #                 "question_text": question_data.get("question_text"),
+        #                 "topic": core_topic,
+        #                 "video": video_data
+        #             })
+        #             print(f"Added video recommendation for question")
+        #     else:
+        #         print(f"No question data found for quiz {quiz_id}, question {question.get('question_id')}")
+        # --- END OLD LOGIC ---
+
+    # print(f"Returning {len(res)} video recommendations")
     return res
 
 async def get_course_videos(course_id):
     """Fetch all video data associated with a specific course ID."""
     try:
-        print(f"Starting get_course_videos for course_id: {course_id}")
+        # print(f"Starting get_course_videos for course_id: {course_id}")
         # Add index hint and limit the fields we're retrieving
         projection = {
             'video_data': 1,
@@ -81,7 +132,7 @@ async def get_course_videos(course_id):
             projection=projection
         ).to_list(length=None)
         
-        print(f"Found {len(quizzes)} quizzes for course {course_id}")
+        # print(f"Found {len(quizzes)} quizzes for course {course_id}")
         
         course_videos = []
         for quiz in quizzes:
@@ -95,12 +146,12 @@ async def get_course_videos(course_id):
                     'video_data': video_data
                 })
         
-        print(f"Returning {len(course_videos)} videos")
+        # print(f"Returning {len(course_videos)} videos")
         return course_videos
     except Exception as e:
-        print(f"Error in get_course_videos: {str(e)}")
-        import traceback
-        print(f"Full traceback: {traceback.format_exc()}")
+        # print(f"Error in get_course_videos: {str(e)}")
+        # import traceback
+        # print(f"Full traceback: {traceback.format_exc()}")
         return []
 
 async def update_videos_for_filter(filter_criteria=None):
@@ -202,3 +253,45 @@ async def remove_video(quiz_id, question_id):
     )
     
     return {"message": "Video successfully removed", "success": True}
+
+async def set_video_watched(student_id, course_id, video_link, watched):
+    """Set or unset a video as watched for a student in a course."""
+    course_key = str(course_id)
+    student = await students_collection.find_one({"_id": student_id})
+    if not student:
+        return {"error": "Student not found"}
+    # Initialize watched_videos dict if missing
+    if "watched_videos" not in student or not isinstance(student["watched_videos"], dict):
+        await students_collection.update_one(
+            {"_id": student_id},
+            {"$set": {"watched_videos": {}}}
+        )
+        student["watched_videos"] = {}
+    # Initialize course array if missing
+    if course_key not in student["watched_videos"] or not isinstance(student["watched_videos"][course_key], list):
+        await students_collection.update_one(
+            {"_id": student_id},
+            {"$set": {f"watched_videos.{course_key}": []}}
+        )
+    if watched:
+        # Add video_link to watched_videos[course_key] if not present
+        await students_collection.update_one(
+            {"_id": student_id},
+            {"$addToSet": {f"watched_videos.{course_key}": video_link}}
+        )
+    else:
+        # Remove video_link from watched_videos[course_key]
+        await students_collection.update_one(
+            {"_id": student_id},
+            {"$pull": {f"watched_videos.{course_key}": video_link}}
+        )
+    return {"success": True}
+
+async def get_watched_videos(student_id, course_id):
+    """Get the list of watched video links for a student in a course."""
+    course_key = str(course_id)
+    student = await students_collection.find_one({"_id": student_id})
+    if not student:
+        return []
+    watched_dict = student.get("watched_videos", {})
+    return watched_dict.get(course_key, [])
