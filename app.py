@@ -39,7 +39,8 @@ app = cors(app,
         "chrome-extension://*",  # Allow all Chrome extensions
         "https://canvas.instructure.com",  # Allow Canvas
         "https://webcourses.ucf.edu",  # Allow UCF Canvas
-        "http://localhost:3000"  # Allow AchieveUp frontend development
+        "http://localhost:3000",  # Allow AchieveUp frontend development
+        "https://achieveup.netlify.app"  # Allow AchieveUp frontend production
     ],
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
