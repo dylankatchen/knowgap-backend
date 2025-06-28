@@ -38,7 +38,8 @@ app = cors(app,
     allow_origin=[
         "chrome-extension://*",  # Allow all Chrome extensions
         "https://canvas.instructure.com",  # Allow Canvas
-        "https://webcourses.ucf.edu"  # Allow UCF Canvas
+        "https://webcourses.ucf.edu",  # Allow UCF Canvas
+        "http://localhost:3000"  # Allow AchieveUp frontend development
     ],
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -72,9 +73,9 @@ init_video_routes(app)
 init_support_routes(app)
 
 # Register AchieveUp blueprints
-app.register_blueprint(auth_bp, url_prefix='/api')
-app.register_blueprint(canvas_bp, url_prefix='/api')
-app.register_blueprint(achieveup_bp, url_prefix='/api')
+app.register_blueprint(auth_bp)
+app.register_blueprint(canvas_bp)
+app.register_blueprint(achieveup_bp)
 app.register_blueprint(skill_bp)
 app.register_blueprint(badge_bp)
 app.register_blueprint(progress_bp)

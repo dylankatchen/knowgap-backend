@@ -31,7 +31,7 @@ async def verify_password(password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
     return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-async def create_jwt_token(user_id: str, email: str, role: str) -> str:
+def create_jwt_token(user_id: str, email: str, role: str) -> str:
     """Create a JWT token for a user."""
     payload = {
         'user_id': user_id,
@@ -86,7 +86,7 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
         await achieveup_users_collection.insert_one(user_doc)
         
         # Generate JWT token
-        token = generate_jwt_token(user_id, email, user_doc['role'])
+        token = create_jwt_token(user_id, email, user_doc['role'])
         
         # Return user info (without password and Canvas token)
         user_info = {
@@ -126,7 +126,7 @@ async def achieveup_login(email: str, password: str) -> dict:
             }
         
         # Generate JWT token
-        token = generate_jwt_token(user['user_id'], user['email'], user['role'])
+        token = create_jwt_token(user['user_id'], user['email'], user['role'])
         
         # Return user info (without password and Canvas token)
         user_info = {
@@ -302,17 +302,6 @@ async def achieveup_change_password(token: str, current_password: str, new_passw
     except Exception as e:
         logger.error(f"Change password error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
-
-def generate_jwt_token(user_id: str, email: str, role: str) -> str:
-    """Generate JWT token for user."""
-    payload = {
-        'user_id': user_id,
-        'email': email,
-        'role': role,
-        'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
-        'iat': datetime.utcnow()
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 async def get_user_canvas_token(user_id: str) -> str:
     """Get user's Canvas API token (for internal use only)."""
