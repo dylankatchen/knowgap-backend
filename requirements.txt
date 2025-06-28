@@ -27,10 +27,12 @@ pymongo==4.9.1
 pandas==2.2.3
 beautifulsoup4==4.12.3
 pycryptodome==3.18.0
-aiohttp==3.10.10
+aiohttp==3.9.1
 google-api-python-client==2.95.0
 motor==3.6.0
 jinja2==3.1.2
+PyJWT==2.8.0
+bcrypt==4.1.2
 
 # Flask and Quart Dependencies
 quart==0.19.8   # Updated for compatibility

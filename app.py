@@ -15,6 +15,13 @@ from routes.user_routes import init_user_routes
 from routes.video_routes import init_video_routes
 from routes.support_routes import init_support_routes
 from routes.course_routes import init_course_routes
+from routes.auth_routes import auth_bp
+from routes.canvas_routes import canvas_bp
+from routes.skill_routes import skill_bp
+from routes.badge_routes import badge_bp
+from routes.progress_routes import progress_bp
+from routes.analytics_routes import analytics_bp
+from routes.achieveup_routes import achieveup_bp
 
 from config import Config
 
@@ -63,6 +70,15 @@ init_user_routes(app)
 init_course_routes(app)
 init_video_routes(app)
 init_support_routes(app)
+
+# Register AchieveUp blueprints
+app.register_blueprint(auth_bp, url_prefix='/api')
+app.register_blueprint(canvas_bp, url_prefix='/api')
+app.register_blueprint(achieveup_bp, url_prefix='/api')
+app.register_blueprint(skill_bp)
+app.register_blueprint(badge_bp)
+app.register_blueprint(progress_bp)
+app.register_blueprint(analytics_bp)
 
 # Apply CORS after routes are initialized
 
