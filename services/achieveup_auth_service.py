@@ -77,10 +77,35 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             'email': email,
             'password': hashed_password.decode('utf-8'),
             'role': 'student',  # Default role
-            'canvas_api_token': canvas_api_token,  # Store securely
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
+        
+        # Handle Canvas API token if provided
+        if canvas_api_token:
+            # Validate token format
+            if len(canvas_api_token) < 64:
+                return {
+                    'error': 'Invalid token format',
+                    'message': 'Canvas API tokens are typically 64+ characters long.',
+                    'statusCode': 400
+                }
+            
+            # Validate token with Canvas API
+            from services.achieveup_canvas_service import validate_canvas_token
+            validation_result = await validate_canvas_token(canvas_api_token)
+            
+            if not validation_result['valid']:
+                return {
+                    'error': 'Invalid Canvas token',
+                    'message': validation_result['message'],
+                    'statusCode': 400
+                }
+            
+            # Store the validated token
+            user_doc['canvas_api_token'] = canvas_api_token
+            user_doc['canvas_token_created_at'] = datetime.utcnow()
+            user_doc['canvas_token_last_validated'] = datetime.utcnow()
         
         # Insert user into database
         await achieveup_users_collection.insert_one(user_doc)
@@ -93,7 +118,8 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             'id': user_id,
             'name': name,
             'email': email,
-            'role': user_doc['role']
+            'role': user_doc['role'],
+            'hasCanvasToken': bool(canvas_api_token)
         }
         
         return {
@@ -133,7 +159,8 @@ async def achieveup_login(email: str, password: str) -> dict:
             'id': user['user_id'],
             'name': user['name'],
             'email': user['email'],
-            'role': user['role']
+            'role': user['role'],
+            'hasCanvasToken': bool(user.get('canvas_api_token'))
         }
         
         return {
@@ -176,7 +203,8 @@ async def achieveup_verify_token(token: str) -> dict:
             'id': user['user_id'],
             'name': user['name'],
             'email': user['email'],
-            'role': user['role']
+            'role': user['role'],
+            'hasCanvasToken': bool(user.get('canvas_api_token'))
         }
         
         return {'user': user_info}
@@ -230,7 +258,29 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
         
         # Only update Canvas API token if provided
         if canvas_api_token is not None:
+            # Validate token format (Canvas tokens are typically 64+ characters)
+            if len(canvas_api_token) < 64:
+                return {
+                    'error': 'Invalid token format',
+                    'message': 'Canvas API tokens are typically 64+ characters long.',
+                    'statusCode': 400
+                }
+            
+            # Validate token with Canvas API
+            from services.achieveup_canvas_service import validate_canvas_token
+            validation_result = await validate_canvas_token(canvas_api_token)
+            
+            if not validation_result['valid']:
+                return {
+                    'error': 'Invalid Canvas token',
+                    'message': validation_result['message'],
+                    'statusCode': 400
+                }
+            
+            # Store the validated token
             update_data['canvas_api_token'] = canvas_api_token
+            update_data['canvas_token_created_at'] = datetime.utcnow()
+            update_data['canvas_token_last_validated'] = datetime.utcnow()
         
         # Update user in database
         await achieveup_users_collection.update_one(
@@ -246,7 +296,8 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
             'id': updated_user['user_id'],
             'name': updated_user['name'],
             'email': updated_user['email'],
-            'role': updated_user['role']
+            'role': updated_user['role'],
+            'hasCanvasToken': bool(updated_user.get('canvas_api_token'))
         }
         
         return {'user': user_info}

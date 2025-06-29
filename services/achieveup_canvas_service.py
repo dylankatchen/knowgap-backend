@@ -20,6 +20,56 @@ achieveup_canvas_questions_collection = db["AchieveUp_Canvas_Questions"]
 # Canvas API configuration
 CANVAS_API_URL = getattr(Config, 'CANVAS_API_URL', 'https://webcourses.ucf.edu/api/v1')
 
+async def validate_canvas_token(canvas_token: str) -> dict:
+    """Validate Canvas API token by testing it with Canvas API."""
+    try:
+        headers = {
+            'Authorization': f'Bearer {canvas_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Test token by calling Canvas API /users/self endpoint
+        url = f"{CANVAS_API_URL}/users/self"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    user_data = await response.json()
+                    return {
+                        'valid': True,
+                        'message': 'Token is valid',
+                        'user_info': {
+                            'id': user_data.get('id'),
+                            'name': user_data.get('name'),
+                            'email': user_data.get('email')
+                        }
+                    }
+                elif response.status == 401:
+                    return {
+                        'valid': False,
+                        'message': 'Invalid Canvas API token. Please check your token and try again.'
+                    }
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Canvas API validation error: {response.status} - {error_text}")
+                    return {
+                        'valid': False,
+                        'message': f'Canvas API returned error {response.status}. Please try again later.'
+                    }
+                    
+    except aiohttp.ClientError as e:
+        logger.error(f"Canvas API connection error: {str(e)}")
+        return {
+            'valid': False,
+            'message': 'Unable to connect to Canvas API. Please check your internet connection and try again.'
+        }
+    except Exception as e:
+        logger.error(f"Canvas token validation error: {str(e)}")
+        return {
+            'valid': False,
+            'message': 'An unexpected error occurred while validating the token.'
+        }
+
 async def get_canvas_courses(token: str) -> dict:
     """Get user's Canvas courses for AchieveUp using stored Canvas API token."""
     try:

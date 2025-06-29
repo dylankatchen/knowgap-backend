@@ -217,6 +217,48 @@ async def achieveup_update_profile_route():
             'statusCode': 500
         }), 500
 
+@auth_bp.route('/auth/validate-canvas-token', methods=['POST'])
+async def validate_canvas_token_route():
+    """Validate Canvas API token with Canvas API before storing. (AchieveUp only)"""
+    try:
+        data = await request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'Invalid request',
+                'message': 'Request body is required',
+                'statusCode': 400
+            }), 400
+        
+        canvas_api_token = data.get('canvasApiToken')
+        
+        if not canvas_api_token:
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Canvas API token is required',
+                'statusCode': 400
+            }), 400
+        
+        # Validate token format (Canvas tokens are typically 64+ characters)
+        if len(canvas_api_token) < 64:
+            return jsonify({
+                'valid': False,
+                'message': 'Invalid token format. Canvas API tokens are typically 64+ characters long.'
+            }), 200
+        
+        # Test token with Canvas API
+        from services.achieveup_canvas_service import validate_canvas_token
+        validation_result = await validate_canvas_token(canvas_api_token)
+        
+        return jsonify(validation_result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
 @auth_bp.route('/auth/password', methods=['PUT'])
 async def achieveup_change_password_route():
     """Change user password. (AchieveUp only)"""
