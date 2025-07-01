@@ -27,6 +27,7 @@ async def achieveup_signup_route():
         email = data.get('email')
         password = data.get('password')
         canvas_api_token = data.get('canvasApiToken')
+        canvas_token_type = data.get('canvasTokenType')
         
         if not name or not email or not password:
             return jsonify({
@@ -36,7 +37,7 @@ async def achieveup_signup_route():
             }), 400
         
         # Call authentication service
-        result = await achieveup_signup(name, email, password, canvas_api_token)
+        result = await achieveup_signup(name, email, password, canvas_api_token, canvas_token_type)
         
         if 'error' in result:
             return jsonify({
@@ -190,6 +191,7 @@ async def achieveup_update_profile_route():
         name = data.get('name')
         email = data.get('email')
         canvas_api_token = data.get('canvasApiToken')
+        canvas_token_type = data.get('canvasTokenType')
         
         if not name or not email:
             return jsonify({
@@ -199,7 +201,7 @@ async def achieveup_update_profile_route():
             }), 400
         
         # Call authentication service
-        result = await achieveup_update_profile(token, name, email, canvas_api_token)
+        result = await achieveup_update_profile(token, name, email, canvas_api_token, canvas_token_type)
         
         if 'error' in result:
             return jsonify({

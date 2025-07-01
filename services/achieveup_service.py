@@ -527,3 +527,113 @@ async def get_instructor_course_analytics(token: str, course_id: str) -> dict:
     except Exception as e:
         logger.error(f"Get instructor course analytics error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
+
+async def analyze_questions(token: str, questions: list) -> dict:
+    """Analyze question complexity and suggest skills for multiple questions."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        analysis_results = []
+        
+        for question in questions:
+            question_id = question.get('id')
+            question_text = question.get('text', '')
+            
+            if not question_id or not question_text:
+                continue
+            
+            # Analyze question complexity
+            complexity = analyze_question_complexity(question_text)
+            
+            # Get skill suggestions
+            suggested_skills = await suggest_skills_for_question(token, question_text)
+            
+            # Calculate confidence score
+            confidence = calculate_confidence_score(question_text, suggested_skills)
+            
+            analysis_results.append({
+                'questionId': question_id,
+                'complexity': complexity,
+                'suggestedSkills': suggested_skills if isinstance(suggested_skills, list) else [],
+                'confidence': confidence
+            })
+        
+        return analysis_results
+        
+    except Exception as e:
+        logger.error(f"Analyze questions error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_question_suggestions(token: str, question_id: str) -> dict:
+    """Get AI-powered skill suggestions for a specific question."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get question from database (assuming questions are stored)
+        # For now, return mock suggestions
+        suggestions = ['problem_solving', 'critical_thinking', 'technical_skills']
+        confidence = 0.85
+        
+        return {
+            'suggestions': suggestions,
+            'confidence': confidence
+        }
+        
+    except Exception as e:
+        logger.error(f"Get question suggestions error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+def analyze_question_complexity(question_text: str) -> str:
+    """Analyze the complexity of a question based on its content."""
+    question_lower = question_text.lower()
+    
+    # Simple complexity analysis based on keywords and length
+    complexity_indicators = {
+        'low': ['what is', 'define', 'list', 'name', 'identify', 'simple', 'basic'],
+        'medium': ['explain', 'describe', 'compare', 'analyze', 'evaluate', 'discuss'],
+        'high': ['synthesize', 'create', 'design', 'develop', 'implement', 'solve complex']
+    }
+    
+    score = 0
+    for level, indicators in complexity_indicators.items():
+        for indicator in indicators:
+            if indicator in question_lower:
+                if level == 'low':
+                    score += 1
+                elif level == 'medium':
+                    score += 2
+                elif level == 'high':
+                    score += 3
+    
+    # Consider question length
+    if len(question_text) > 200:
+        score += 1
+    elif len(question_text) > 100:
+        score += 0.5
+    
+    # Determine complexity level
+    if score >= 3:
+        return 'high'
+    elif score >= 1.5:
+        return 'medium'
+    else:
+        return 'low'
+
+def calculate_confidence_score(question_text: str, suggested_skills: list) -> float:
+    """Calculate confidence score for skill suggestions."""
+    if not suggested_skills:
+        return 0.0
+    
+    # Simple confidence calculation based on skill count and question length
+    base_confidence = min(len(suggested_skills) * 0.2, 0.8)
+    
+    # Adjust based on question length (longer questions might have more context)
+    length_factor = min(len(question_text) / 500, 0.2)
+    
+    return min(base_confidence + length_factor, 1.0)

@@ -274,9 +274,10 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
                     'statusCode': 400
                 }
             
-            # Validate token with Canvas API
+            # Validate token with Canvas API using the specified token type
             from services.achieveup_canvas_service import validate_canvas_token
-            validation_result = await validate_canvas_token(canvas_api_token)
+            token_type = canvas_token_type or 'student'
+            validation_result = await validate_canvas_token(canvas_api_token, token_type)
             
             if not validation_result['valid']:
                 return {
@@ -289,7 +290,9 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
             update_data['canvas_api_token'] = canvas_api_token
             update_data['canvas_token_created_at'] = datetime.utcnow()
             update_data['canvas_token_last_validated'] = datetime.utcnow()
+            update_data['canvas_token_type'] = token_type
         
+        # Update canvas_token_type if provided (even without new token)
         if canvas_token_type is not None:
             update_data['canvas_token_type'] = canvas_token_type
         

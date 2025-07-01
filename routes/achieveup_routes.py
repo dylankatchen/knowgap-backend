@@ -11,7 +11,9 @@ from services.achieveup_service import (
     update_student_progress,
     get_individual_analytics,
     export_course_data,
-    import_course_data
+    import_course_data,
+    analyze_questions,
+    get_question_suggestions
 )
 
 achieveup_bp = Blueprint('achieveup', __name__)
@@ -644,3 +646,88 @@ async def instructor_course_analytics_route(course_id):
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
+
+@achieveup_bp.route('/achieveup/questions/analyze', methods=['POST'])
+async def analyze_questions_route():
+    """Analyze question complexity and suggest skills. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        data = await request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'Invalid request',
+                'message': 'Request body is required',
+                'statusCode': 400
+            }), 400
+        
+        questions = data.get('questions', [])
+        
+        if not questions:
+            return jsonify({
+                'error': 'Missing required fields',
+                'message': 'Questions array is required',
+                'statusCode': 400
+            }), 400
+        
+        # Call service
+        result = await analyze_questions(token, questions)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/questions/<question_id>/suggestions', methods=['GET'])
+async def get_question_suggestions_route(question_id):
+    """Get AI-powered skill suggestions for specific question. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # Call service
+        result = await get_question_suggestions(token, question_id)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
