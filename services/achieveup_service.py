@@ -442,3 +442,88 @@ async def import_course_data(token: str, course_id: str, import_data: dict) -> d
     except Exception as e:
         logger.error(f"Import course data error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
+
+async def create_instructor_skill_matrix(token: str, course_id: str, matrix_name: str, skills: list, quiz_questions: dict) -> dict:
+    """Create skill matrix with quiz question mapping for instructor."""
+    try:
+        # Verify user token and instructor status
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        user_id = user_result['user']['id']
+        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        db = client[Config.DATABASE]
+        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
+            return {'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}
+        # Create matrix document
+        matrix_id = str(uuid.uuid4())
+        matrix_doc = {
+            '_id': matrix_id,
+            'course_id': course_id,
+            'matrix_name': matrix_name,
+            'skills': skills,
+            'quiz_questions': quiz_questions,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+            'created_by': user_id
+        }
+        await db['AchieveUp_Skill_Matrices'].insert_one(matrix_doc)
+        return matrix_doc
+    except Exception as e:
+        logger.error(f"Create instructor skill matrix error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_instructor_course_analytics(token: str, course_id: str) -> dict:
+    """Get detailed analytics for instructor's course."""
+    try:
+        # Verify user token and instructor status
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        user_id = user_result['user']['id']
+        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        db = client[Config.DATABASE]
+        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
+            return {'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}
+        # Gather analytics data
+        # Example: count students, average progress, skill distribution, risk students, top performers
+        progress_cursor = db['AchieveUp_Progress'].find({'course_id': course_id})
+        students = []
+        skill_distribution = {}
+        total_progress = 0
+        total_students = 0
+        risk_students = []
+        top_performers = []
+        async for doc in progress_cursor:
+            students.append(doc['student_id'])
+            total_students += 1
+            # Calculate average progress (simple mean of all skill scores)
+            if 'skill_progress' in doc:
+                avg_score = sum([v['score'] for v in doc['skill_progress'].values()]) / max(len(doc['skill_progress']), 1)
+                total_progress += avg_score
+                # Skill distribution
+                for skill, v in doc['skill_progress'].items():
+                    skill_distribution.setdefault(skill, []).append(v['score'])
+                # Risk students (example: avg_score < 50)
+                if avg_score < 50:
+                    risk_students.append(doc['student_id'])
+                # Top performers (example: avg_score > 90)
+                if avg_score > 90:
+                    top_performers.append(doc['student_id'])
+        average_progress = total_progress / max(total_students, 1)
+        # Aggregate skill distribution
+        skill_dist_summary = {k: sum(v)/len(v) if v else 0 for k, v in skill_distribution.items()}
+        analytics = {
+            'course_id': course_id,
+            'total_students': total_students,
+            'average_progress': average_progress,
+            'skill_distribution': skill_dist_summary,
+            'risk_students': risk_students,
+            'top_performers': top_performers
+        }
+        return analytics
+    except Exception as e:
+        logger.error(f"Get instructor course analytics error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}

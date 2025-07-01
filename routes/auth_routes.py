@@ -231,6 +231,7 @@ async def validate_canvas_token_route():
             }), 400
         
         canvas_api_token = data.get('canvasApiToken')
+        canvas_token_type = data.get('canvasTokenType', 'student')
         
         if not canvas_api_token:
             return jsonify({
@@ -248,7 +249,7 @@ async def validate_canvas_token_route():
         
         # Test token with Canvas API
         from services.achieveup_canvas_service import validate_canvas_token
-        validation_result = await validate_canvas_token(canvas_api_token)
+        validation_result = await validate_canvas_token(canvas_api_token, canvas_token_type)
         
         return jsonify(validation_result), 200
         

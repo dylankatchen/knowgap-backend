@@ -53,7 +53,7 @@ async def verify_jwt_token(token: str) -> dict:
     except jwt.InvalidTokenError:
         raise ValueError("Invalid token")
 
-async def achieveup_signup(name: str, email: str, password: str, canvas_api_token: str = None) -> dict:
+async def achieveup_signup(name: str, email: str, password: str, canvas_api_token: str = None, canvas_token_type: str = None) -> dict:
     """User registration with email/password and optional Canvas API token."""
     try:
         # Check if user already exists
@@ -80,6 +80,11 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
+        
+        if canvas_token_type:
+            user_doc['canvas_token_type'] = canvas_token_type
+        else:
+            user_doc['canvas_token_type'] = 'student'
         
         # Handle Canvas API token if provided
         if canvas_api_token:
@@ -119,7 +124,8 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             'name': name,
             'email': email,
             'role': user_doc['role'],
-            'hasCanvasToken': bool(canvas_api_token)
+            'hasCanvasToken': bool(canvas_api_token),
+            'canvasTokenType': user_doc.get('canvas_token_type', 'student')
         }
         
         return {
@@ -160,7 +166,8 @@ async def achieveup_login(email: str, password: str) -> dict:
             'name': user['name'],
             'email': user['email'],
             'role': user['role'],
-            'hasCanvasToken': bool(user.get('canvas_api_token'))
+            'hasCanvasToken': bool(user.get('canvas_api_token')),
+            'canvasTokenType': user.get('canvas_token_type', 'student')
         }
         
         return {
@@ -204,7 +211,8 @@ async def achieveup_verify_token(token: str) -> dict:
             'name': user['name'],
             'email': user['email'],
             'role': user['role'],
-            'hasCanvasToken': bool(user.get('canvas_api_token'))
+            'hasCanvasToken': bool(user.get('canvas_api_token')),
+            'canvasTokenType': user.get('canvas_token_type', 'student')
         }
         
         return {'user': user_info}
@@ -229,7 +237,7 @@ async def achieveup_get_user_info(token: str) -> dict:
     """Get user information from token."""
     return await achieveup_verify_token(token)
 
-async def achieveup_update_profile(token: str, name: str, email: str, canvas_api_token: str = None) -> dict:
+async def achieveup_update_profile(token: str, name: str, email: str, canvas_api_token: str = None, canvas_token_type: str = None) -> dict:
     """Update user profile information including Canvas API token."""
     try:
         # Verify token and get user info
@@ -282,6 +290,9 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
             update_data['canvas_token_created_at'] = datetime.utcnow()
             update_data['canvas_token_last_validated'] = datetime.utcnow()
         
+        if canvas_token_type is not None:
+            update_data['canvas_token_type'] = canvas_token_type
+        
         # Update user in database
         await achieveup_users_collection.update_one(
             {'user_id': user_id},
@@ -297,7 +308,8 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
             'name': updated_user['name'],
             'email': updated_user['email'],
             'role': updated_user['role'],
-            'hasCanvasToken': bool(updated_user.get('canvas_api_token'))
+            'hasCanvasToken': bool(updated_user.get('canvas_api_token')),
+            'canvasTokenType': updated_user.get('canvas_token_type', 'student')
         }
         
         return {'user': user_info}

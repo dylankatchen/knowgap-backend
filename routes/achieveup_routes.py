@@ -583,3 +583,64 @@ async def import_course_data_route():
             'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500
+
+@achieveup_bp.route('/achieveup/instructor/skill-matrix/create', methods=['POST'])
+async def instructor_skill_matrix_create_route():
+    """Create skill matrix with quiz question mapping (instructor only)."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
+        token = auth_header.split(' ')[1]
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
+        user_id = user_result['user']['id']
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from config import Config
+        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        db = client[Config.DATABASE]
+        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
+            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
+        data = await request.get_json()
+        if not data:
+            return jsonify({'error': 'Invalid request', 'message': 'Request body is required', 'statusCode': 400}), 400
+        course_id = data.get('course_id')
+        matrix_name = data.get('matrix_name')
+        skills = data.get('skills', [])
+        quiz_questions = data.get('quiz_questions', {})
+        if not course_id or not matrix_name or not skills:
+            return jsonify({'error': 'Missing required fields', 'message': 'Course ID, matrix name, and skills are required', 'statusCode': 400}), 400
+        from services.achieveup_service import create_instructor_skill_matrix
+        result = await create_instructor_skill_matrix(token, course_id, matrix_name, skills, quiz_questions)
+        return jsonify(result), 201
+    except Exception as e:
+        return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
+
+@achieveup_bp.route('/achieveup/instructor/courses/<course_id>/analytics', methods=['GET'])
+async def instructor_course_analytics_route(course_id):
+    """Get detailed analytics for instructor's course (instructor only)."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
+        token = auth_header.split(' ')[1]
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
+        user_id = user_result['user']['id']
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from config import Config
+        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        db = client[Config.DATABASE]
+        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
+            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
+        from services.achieveup_service import get_instructor_course_analytics
+        result = await get_instructor_course_analytics(token, course_id)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
