@@ -313,3 +313,86 @@ async def achieveup_change_password_route():
             'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500 
+
+@auth_bp.route('/auth/token-status', methods=['GET'])
+async def token_status_route():
+    """Get current token status and validity. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # Verify the token
+        result = await achieveup_verify_token(token)
+        
+        if 'error' in result:
+            return jsonify({
+                'valid': False,
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        # Token is valid, return status
+        return jsonify({
+            'valid': True,
+            'message': 'Token is valid',
+            'user': result['user'],
+            'expires_at': result.get('expires_at'),
+            'token_type': 'Bearer'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@auth_bp.route('/auth/refresh-token', methods=['POST'])
+async def refresh_token_route():
+    """Refresh the current authentication token. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # Verify the current token first
+        verify_result = await achieveup_verify_token(token)
+        if 'error' in verify_result:
+            return jsonify({
+                'error': verify_result['error'],
+                'message': verify_result['error'],
+                'statusCode': verify_result['statusCode']
+            }), verify_result['statusCode']
+        
+        # Generate a new token for the user
+        from services.achieveup_auth_service import generate_jwt_token
+        user_id = verify_result['user']['id']
+        new_token = generate_jwt_token(user_id)
+        
+        return jsonify({
+            'token': new_token,
+            'message': 'Token refreshed successfully',
+            'user': verify_result['user']
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500 

@@ -637,3 +637,4 @@ def calculate_confidence_score(question_text: str, suggested_skills: list) -> fl
     length_factor = min(len(question_text) / 500, 0.2)
     
     return min(base_confidence + length_factor, 1.0)
+ 
