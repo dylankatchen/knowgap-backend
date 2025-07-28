@@ -5,6 +5,11 @@ import logging
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
+from services.achieveup_canvas_demo_service import (
+    is_demo_token, get_demo_instructor_courses, get_demo_course_details,
+    get_demo_course_quizzes, get_demo_quiz_questions, get_demo_course_students,
+    validate_demo_canvas_token
+)
 from config import Config
 
 # Set up logging
@@ -23,6 +28,10 @@ CANVAS_API_URL = getattr(Config, 'CANVAS_API_URL', 'https://webcourses.ucf.edu/a
 async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'student') -> dict:
     """Validate Canvas API token by testing it with Canvas API. Supports student and instructor tokens."""
     try:
+        # Check if this is a demo token
+        if is_demo_token(canvas_token):
+            return await validate_demo_canvas_token(canvas_token, canvas_token_type)
+        
         headers = {
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
@@ -349,6 +358,10 @@ async def get_cached_canvas_data(course_id: str, data_type: str) -> dict:
 async def get_instructor_courses(canvas_token: str) -> dict:
     """Get all courses taught by the instructor using their Canvas token."""
     try:
+        # Check if this is a demo token
+        if is_demo_token(canvas_token):
+            return await get_demo_instructor_courses()
+        
         headers = {
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
@@ -436,6 +449,10 @@ async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict
 async def get_course_students(canvas_token: str, course_id: str) -> dict:
     """Get students enrolled in a course."""
     try:
+        # Check if this is a demo token
+        if is_demo_token(canvas_token):
+            return await get_demo_course_students(course_id)
+        
         headers = {
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
