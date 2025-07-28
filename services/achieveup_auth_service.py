@@ -133,7 +133,7 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             
             # Store the validated token (encrypted)
             from utils.encryption_utils import encrypt_token
-            encrypted_token = encrypt_token(canvas_api_token)
+            encrypted_token = encrypt_token(bytes.fromhex(Config.HEX_ENCRYPTION_KEY), canvas_api_token)
             user_doc['canvas_api_token'] = encrypted_token
             user_doc['canvas_token_created_at'] = datetime.utcnow()
             user_doc['canvas_token_last_validated'] = datetime.utcnow()
@@ -405,8 +405,8 @@ async def get_user_canvas_token(user_id: str) -> str:
     try:
         user = await achieveup_users_collection.find_one({'user_id': user_id})
         if user and user.get('canvas_api_token'):
-            from utils.encryption_utils import decrypt_token
-            return decrypt_token(user['canvas_api_token'])
+                    from utils.encryption_utils import decrypt_token
+        return decrypt_token(bytes.fromhex(Config.HEX_ENCRYPTION_KEY), user['canvas_api_token'])
         return None
     except Exception as e:
         logger.error(f"Error getting Canvas token: {str(e)}")

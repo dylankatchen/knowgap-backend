@@ -199,8 +199,8 @@ async def create_demo_instructor(users_collection):
     hashed_password = bcrypt.hashpw(DEMO_INSTRUCTOR_PASSWORD.encode('utf-8'), salt)
     
     # Encrypt demo Canvas token
-    from utils.encryption_utils import encrypt_token
-    encrypted_token = encrypt_token(DEMO_CANVAS_TOKEN)
+            from utils.encryption_utils import encrypt_token
+        encrypted_token = encrypt_token(bytes.fromhex(Config.HEX_ENCRYPTION_KEY), DEMO_CANVAS_TOKEN)
     
     instructor_id = str(uuid.uuid4())
     instructor_doc = {
