@@ -695,14 +695,16 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
             start_date = end_date - timedelta(days=30)
         
         student_analytics = []
+        skill_distribution = {}
+        all_skill_scores = {}
+        
         for student in students:
             student_id = student.get('id')
             
-            # Get progress data for time range
+            # Get all progress data for this student in this course (not just time range)
             progress_query = {
                 'student_id': student_id,
-                'course_id': course_id,
-                'updated_at': {'$gte': start_date, '$lte': end_date}
+                'course_id': course_id
             }
             
             if skill_id:
@@ -710,66 +712,114 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
             
             progress_data = await achieveup_progress_collection.find(progress_query).to_list(length=None)
             
-            # Calculate analytics
-            total_skills = len(course_skills)
-            completed_skills = len([p for p in progress_data if p.get('completed', False)])
-            progress_percentage = (completed_skills / total_skills * 100) if total_skills > 0 else 0
-            
-            # Calculate skill proficiency scores
+            # Calculate skill breakdown and scores
+            skill_breakdown = {}
             skill_scores = {}
+            total_questions_attempted = 0
+            total_questions_correct = 0
+            skills_mastered = 0
+            
             for skill in course_skills:
                 skill_progress = [p for p in progress_data if p.get('skill') == skill]
                 if skill_progress:
-                    avg_score = sum([p.get('score', 0) for p in skill_progress]) / len(skill_progress)
-                    skill_scores[skill] = round(avg_score, 2)
+                    # Get the latest progress for this skill
+                    latest_progress = max(skill_progress, key=lambda x: x.get('updated_at', datetime.min))
+                    
+                    score = latest_progress.get('score', 0)
+                    level = latest_progress.get('level', 'beginner')
+                    questions_attempted = latest_progress.get('questions_attempted', 0)
+                    questions_correct = latest_progress.get('questions_correct', 0)
+                    
+                    skill_breakdown[skill] = {
+                        "score": round(score, 1),
+                        "level": level,
+                        "questionsAttempted": questions_attempted,
+                        "questionsCorrect": questions_correct
+                    }
+                    
+                    skill_scores[skill] = score
+                    total_questions_attempted += questions_attempted
+                    total_questions_correct += questions_correct
+                    
+                    # Count skills mastered (score >= 80)
+                    if score >= 80:
+                        skills_mastered += 1
+                    
+                    # Track skill distribution
+                    if skill not in skill_distribution:
+                        skill_distribution[skill] = 0
+                        all_skill_scores[skill] = []
+                    skill_distribution[skill] += 1
+                    all_skill_scores[skill].append(score)
                 else:
+                    skill_breakdown[skill] = {
+                        "score": 0,
+                        "level": "beginner", 
+                        "questionsAttempted": 0,
+                        "questionsCorrect": 0
+                    }
                     skill_scores[skill] = 0
+                    
+                    # Still track for distribution
+                    if skill not in skill_distribution:
+                        skill_distribution[skill] = 0
+                        all_skill_scores[skill] = []
+                    skill_distribution[skill] += 1
+                    all_skill_scores[skill].append(0)
             
-            # Risk assessment
-            risk_level = calculate_student_risk_level(progress_data, total_skills, time_range)
+            # Calculate overall progress
+            overall_progress = round(sum(skill_scores.values()) / len(skill_scores), 1) if skill_scores else 0
+            
+            # Calculate risk level
+            if overall_progress >= 75:
+                risk_level = 'low'
+            elif overall_progress >= 50:
+                risk_level = 'medium'
+            else:
+                risk_level = 'high'
+            
+            # Calculate badges (simple logic: 1 badge per skill at intermediate, 2 per advanced)
+            badges_earned = 0
+            for skill_data in skill_breakdown.values():
+                if skill_data["level"] == "intermediate":
+                    badges_earned += 1
+                elif skill_data["level"] == "advanced":
+                    badges_earned += 2
             
             analytics = {
-                'studentId': student_id,
-                'studentName': student.get('name', 'Unknown'),
-                'email': student.get('email', ''),
-                'progressPercentage': round(progress_percentage, 1),
-                'completedSkills': completed_skills,
-                'totalSkills': total_skills,
-                'skillScores': skill_scores,
-                'averageScore': round(sum(skill_scores.values()) / len(skill_scores), 2) if skill_scores else 0,
+                'id': student_id,
+                'name': student.get('name', 'Unknown'),
+                'progress': overall_progress,
+                'skillsMastered': skills_mastered,
+                'badgesEarned': badges_earned,
                 'riskLevel': risk_level,
-                'lastActivity': max([p.get('updated_at', datetime.min) for p in progress_data] + [datetime.min]),
-                'activityCount': len(progress_data),
-                'timeRange': time_range
+                'skillBreakdown': skill_breakdown
             }
             student_analytics.append(analytics)
         
-        # Calculate course-level statistics
-        course_stats = {
-            'totalStudents': len(students),
-            'averageProgress': round(sum([s['progressPercentage'] for s in student_analytics]) / len(student_analytics), 1) if student_analytics else 0,
-            'averageScore': round(sum([s['averageScore'] for s in student_analytics]) / len(student_analytics), 2) if student_analytics else 0,
-            'riskDistribution': {
-                'low': len([s for s in student_analytics if s['riskLevel'] == 'low']),
-                'medium': len([s for s in student_analytics if s['riskLevel'] == 'medium']),
-                'high': len([s for s in student_analytics if s['riskLevel'] == 'high'])
-            },
-            'skillMatrix': {
-                'totalSkills': len(course_skills),
-                'skills': course_skills
+        # Calculate average scores for each skill
+        average_scores = {}
+        for skill, scores in all_skill_scores.items():
+            if scores:
+                average_scores[skill] = round(sum(scores) / len(scores), 1)
+            else:
+                average_scores[skill] = 0
+        
+        # Format response according to frontend requirements
+        response = {
+            'analytics': {
+                'students': student_analytics,
+                'skillDistribution': skill_distribution,
+                'averageScores': average_scores
             }
         }
         
-        return {
-            'courseId': course_id,
-            'timeRange': time_range,
-            'courseStatistics': course_stats,
-            'studentAnalytics': student_analytics,
-            'generatedAt': datetime.utcnow().isoformat()
-        }
+        return response
         
     except Exception as e:
         logger.error(f"Get course students analytics error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def get_course_risk_assessment(token: str, course_id: str, time_range: str = '30d', risk_threshold: str = '0.7') -> dict:
@@ -786,7 +836,7 @@ async def get_course_risk_assessment(token: str, course_id: str, time_range: str
         if 'error' in analytics_result:
             return analytics_result
         
-        student_analytics = analytics_result['studentAnalytics']
+        student_analytics = analytics_result['analytics']['students']
         threshold = float(risk_threshold)
         
         # Identify at-risk students
@@ -1001,8 +1051,8 @@ def analyze_risk_factors(student_analytics: list, threshold: float) -> dict:
     total_students = len(student_analytics)
     
     # Calculate factor frequencies
-    low_completion = len([s for s in student_analytics if s['progressPercentage'] < threshold * 100])
-    low_scores = len([s for s in student_analytics if s['averageScore'] < 70])
+    low_completion = len([s for s in student_analytics if s['progress'] < threshold * 100])
+    low_scores = len([s for s in student_analytics if s['progress'] < 70])
     inactive_students = len([s for s in student_analytics if s['activityCount'] < 3])
     
     return {
@@ -1033,7 +1083,7 @@ def generate_risk_recommendations(high_risk: list, medium_risk: list, risk_facto
             'type': 'intervention',
             'message': f'{len(high_risk)} students need immediate attention. Consider one-on-one meetings or additional support.',
             'action': 'Schedule individual meetings with high-risk students',
-            'students': [s['studentId'] for s in high_risk[:5]]  # Limit to top 5
+            'students': [s['id'] for s in high_risk[:5]]  # Limit to top 5
         })
     
     if medium_risk:
@@ -1042,7 +1092,7 @@ def generate_risk_recommendations(high_risk: list, medium_risk: list, risk_facto
             'type': 'monitoring',
             'message': f'{len(medium_risk)} students should be monitored closely. Consider group study sessions or additional resources.',
             'action': 'Provide additional learning resources and monitor progress',
-            'students': [s['studentId'] for s in medium_risk[:3]]  # Limit to top 3
+            'students': [s['id'] for s in medium_risk[:3]]  # Limit to top 3
         })
     
     # Factor-specific recommendations
@@ -1146,12 +1196,14 @@ def export_to_csv(data: dict, analytics_type: str) -> dict:
     
     if analytics_type == 'students':
         # Export student analytics to CSV
-        fieldnames = ['studentId', 'studentName', 'email', 'progressPercentage', 'completedSkills', 'totalSkills', 'averageScore', 'riskLevel', 'lastActivity', 'activityCount']
+        fieldnames = ['id', 'name', 'progress', 'skillsMastered', 'badgesEarned', 'riskLevel', 'skillBreakdown']
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         
-        for student in data.get('studentAnalytics', []):
+        for student in data.get('analytics', {}).get('students', []):
             row = {k: v for k, v in student.items() if k in fieldnames}
+            # Handle skillBreakdown as a JSON string
+            row['skillBreakdown'] = json.dumps(row['skillBreakdown'])
             writer.writerow(row)
     
     csv_content = output.getvalue()
