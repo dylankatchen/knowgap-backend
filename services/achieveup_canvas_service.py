@@ -432,3 +432,154 @@ async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict
     except Exception as e:
         logger.error(f"Get instructor quiz questions error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500} 
+
+async def get_course_students(canvas_token: str, course_id: str) -> dict:
+    """Get students enrolled in a course."""
+    try:
+        headers = {
+            'Authorization': f'Bearer {canvas_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        url = f"{CANVAS_API_URL}/courses/{course_id}/enrollments"
+        params = {
+            'type[]': 'StudentEnrollment',
+            'per_page': 100,
+            'include[]': 'user'
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params=params) as response:
+                if response.status == 200:
+                    enrollments_data = await response.json()
+                    
+                    students = []
+                    for enrollment in enrollments_data:
+                        user = enrollment.get('user', {})
+                        students.append({
+                            'id': str(user.get('id')),
+                            'name': user.get('name', ''),
+                            'email': user.get('email', ''),
+                            'sortable_name': user.get('sortable_name', ''),
+                            'enrollment_state': enrollment.get('enrollment_state', ''),
+                            'course_id': str(course_id)
+                        })
+                    
+                    return students
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Canvas students error: {response.status} - {error_text}")
+                    return {
+                        'error': f'Failed to fetch students: {response.status}',
+                        'statusCode': response.status
+                    }
+                    
+    except Exception as e:
+        logger.error(f"Get course students error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_course_detailed_info(canvas_token: str, course_id: str) -> dict:
+    """Get detailed course information including syllabus and description."""
+    try:
+        headers = {
+            'Authorization': f'Bearer {canvas_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        url = f"{CANVAS_API_URL}/courses/{course_id}"
+        params = {
+            'include[]': ['syllabus_body', 'public_description', 'course_image']
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params=params) as response:
+                if response.status == 200:
+                    course_data = await response.json()
+                    
+                    return {
+                        'id': str(course_data.get('id')),
+                        'name': course_data.get('name', ''),
+                        'course_code': course_data.get('course_code', ''),
+                        'sis_course_id': course_data.get('sis_course_id', ''),
+                        'syllabus_body': course_data.get('syllabus_body', ''),
+                        'public_description': course_data.get('public_description', ''),
+                        'total_students': course_data.get('total_students', 0),
+                        'enrollment_term_id': course_data.get('enrollment_term_id'),
+                        'course_image': course_data.get('image_download_url', ''),
+                        'start_at': course_data.get('start_at'),
+                        'end_at': course_data.get('end_at')
+                    }
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Canvas course details error: {response.status} - {error_text}")
+                    return {
+                        'error': f'Failed to fetch course details: {response.status}',
+                        'statusCode': response.status
+                    }
+                    
+    except Exception as e:
+        logger.error(f"Get course detailed info error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_quiz_detailed_questions(canvas_token: str, quiz_id: str) -> dict:
+    """Get detailed questions for a quiz including all metadata."""
+    try:
+        headers = {
+            'Authorization': f'Bearer {canvas_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        url = f"{CANVAS_API_URL}/quizzes/{quiz_id}/questions"
+        params = {'per_page': 100}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params=params) as response:
+                if response.status == 200:
+                    questions_data = await response.json()
+                    
+                    questions = []
+                    for question in questions_data:
+                        question_obj = {
+                            'id': str(question.get('id')),
+                            'question_text': clean_html(question.get('question_text', '')),
+                            'question_type': question.get('question_type', ''),
+                            'points_possible': question.get('points_possible', 1),
+                            'correct_comments': question.get('correct_comments', ''),
+                            'incorrect_comments': question.get('incorrect_comments', ''),
+                            'neutral_comments': question.get('neutral_comments', ''),
+                            'quiz_id': str(quiz_id),
+                            'position': question.get('position', 0),
+                            'answers': question.get('answers', [])
+                        }
+                        questions.append(question_obj)
+                    
+                    return questions
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Canvas quiz questions error: {response.status} - {error_text}")
+                    return {
+                        'error': f'Failed to fetch quiz questions: {response.status}',
+                        'statusCode': response.status
+                    }
+                    
+    except Exception as e:
+        logger.error(f"Get quiz detailed questions error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+def clean_html(text: str) -> str:
+    """Remove HTML tags from text while preserving content."""
+    import re
+    if not text:
+        return ''
+    
+    # Remove HTML tags
+    clean_text = re.sub(r'<[^>]+>', '', text)
+    
+    # Clean up whitespace
+    clean_text = ' '.join(clean_text.split())
+    
+    # Decode HTML entities
+    import html
+    clean_text = html.unescape(clean_text)
+    
+    return clean_text 

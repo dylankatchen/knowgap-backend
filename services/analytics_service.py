@@ -659,3 +659,697 @@ def format_analytics_csv(data: list) -> str:
 def format_analytics_pdf(data: list) -> str:
     """Format analytics data as PDF (placeholder)."""
     return f"PDF export for {len(data)} analytics records (placeholder)" 
+
+async def get_course_students_analytics(token: str, course_id: str, time_range: str = '30d', skill_id: str = None) -> dict:
+    """Get comprehensive analytics for all students in a course."""
+    try:
+        # Verify user token
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get students for the course
+        from services.achieveup_service import get_instructor_course_students
+        students_result = await get_instructor_course_students(token, course_id)
+        if 'error' in students_result:
+            return students_result
+        
+        students = students_result if isinstance(students_result, list) else []
+        
+        # Get skill matrix for course
+        from services.achieveup_service import achieveup_skill_matrices_collection, achieveup_progress_collection
+        skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+        course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        
+        # Calculate date range
+        from datetime import datetime, timedelta
+        end_date = datetime.utcnow()
+        if time_range == '7d':
+            start_date = end_date - timedelta(days=7)
+        elif time_range == '90d':
+            start_date = end_date - timedelta(days=90)
+        elif time_range == '1y':
+            start_date = end_date - timedelta(days=365)
+        else:  # 30d default
+            start_date = end_date - timedelta(days=30)
+        
+        student_analytics = []
+        for student in students:
+            student_id = student.get('id')
+            
+            # Get progress data for time range
+            progress_query = {
+                'student_id': student_id,
+                'course_id': course_id,
+                'updated_at': {'$gte': start_date, '$lte': end_date}
+            }
+            
+            if skill_id:
+                progress_query['skill'] = skill_id
+            
+            progress_data = await achieveup_progress_collection.find(progress_query).to_list(length=None)
+            
+            # Calculate analytics
+            total_skills = len(course_skills)
+            completed_skills = len([p for p in progress_data if p.get('completed', False)])
+            progress_percentage = (completed_skills / total_skills * 100) if total_skills > 0 else 0
+            
+            # Calculate skill proficiency scores
+            skill_scores = {}
+            for skill in course_skills:
+                skill_progress = [p for p in progress_data if p.get('skill') == skill]
+                if skill_progress:
+                    avg_score = sum([p.get('score', 0) for p in skill_progress]) / len(skill_progress)
+                    skill_scores[skill] = round(avg_score, 2)
+                else:
+                    skill_scores[skill] = 0
+            
+            # Risk assessment
+            risk_level = calculate_student_risk_level(progress_data, total_skills, time_range)
+            
+            analytics = {
+                'studentId': student_id,
+                'studentName': student.get('name', 'Unknown'),
+                'email': student.get('email', ''),
+                'progressPercentage': round(progress_percentage, 1),
+                'completedSkills': completed_skills,
+                'totalSkills': total_skills,
+                'skillScores': skill_scores,
+                'averageScore': round(sum(skill_scores.values()) / len(skill_scores), 2) if skill_scores else 0,
+                'riskLevel': risk_level,
+                'lastActivity': max([p.get('updated_at', datetime.min) for p in progress_data] + [datetime.min]),
+                'activityCount': len(progress_data),
+                'timeRange': time_range
+            }
+            student_analytics.append(analytics)
+        
+        # Calculate course-level statistics
+        course_stats = {
+            'totalStudents': len(students),
+            'averageProgress': round(sum([s['progressPercentage'] for s in student_analytics]) / len(student_analytics), 1) if student_analytics else 0,
+            'averageScore': round(sum([s['averageScore'] for s in student_analytics]) / len(student_analytics), 2) if student_analytics else 0,
+            'riskDistribution': {
+                'low': len([s for s in student_analytics if s['riskLevel'] == 'low']),
+                'medium': len([s for s in student_analytics if s['riskLevel'] == 'medium']),
+                'high': len([s for s in student_analytics if s['riskLevel'] == 'high'])
+            },
+            'skillMatrix': {
+                'totalSkills': len(course_skills),
+                'skills': course_skills
+            }
+        }
+        
+        return {
+            'courseId': course_id,
+            'timeRange': time_range,
+            'courseStatistics': course_stats,
+            'studentAnalytics': student_analytics,
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Get course students analytics error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_course_risk_assessment(token: str, course_id: str, time_range: str = '30d', risk_threshold: str = '0.7') -> dict:
+    """Get risk assessment analytics for a course."""
+    try:
+        # Verify user token
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get student analytics first
+        analytics_result = await get_course_students_analytics(token, course_id, time_range)
+        if 'error' in analytics_result:
+            return analytics_result
+        
+        student_analytics = analytics_result['studentAnalytics']
+        threshold = float(risk_threshold)
+        
+        # Identify at-risk students
+        high_risk_students = [s for s in student_analytics if s['riskLevel'] == 'high']
+        medium_risk_students = [s for s in student_analytics if s['riskLevel'] == 'medium']
+        
+        # Analyze risk factors
+        risk_factors = analyze_risk_factors(student_analytics, threshold)
+        
+        # Generate recommendations
+        recommendations = generate_risk_recommendations(high_risk_students, medium_risk_students, risk_factors)
+        
+        # Calculate trend data
+        trend_data = await calculate_risk_trends(course_id, time_range)
+        
+        return {
+            'courseId': course_id,
+            'timeRange': time_range,
+            'riskThreshold': threshold,
+            'summary': {
+                'totalStudents': len(student_analytics),
+                'highRiskCount': len(high_risk_students),
+                'mediumRiskCount': len(medium_risk_students),
+                'lowRiskCount': len([s for s in student_analytics if s['riskLevel'] == 'low']),
+                'overallRiskPercentage': round((len(high_risk_students) + len(medium_risk_students)) / len(student_analytics) * 100, 1) if student_analytics else 0
+            },
+            'highRiskStudents': high_risk_students,
+            'mediumRiskStudents': medium_risk_students,
+            'riskFactors': risk_factors,
+            'recommendations': recommendations,
+            'trendData': trend_data,
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Get course risk assessment error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def export_course_analytics(token: str, course_id: str, format_type: str = 'json', analytics_type: str = 'course', time_range: str = '30d') -> dict:
+    """Export analytics data for a course in various formats."""
+    try:
+        # Verify user token
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get appropriate analytics data
+        if analytics_type == 'students':
+            data = await get_course_students_analytics(token, course_id, time_range)
+        elif analytics_type == 'risk':
+            data = await get_course_risk_assessment(token, course_id, time_range)
+        else:  # course
+            data = await get_course_analytics(token, course_id, time_range)
+        
+        if 'error' in data:
+            return data
+        
+        # Export based on format
+        if format_type == 'csv':
+            exported_data = export_to_csv(data, analytics_type)
+        elif format_type == 'pdf':
+            exported_data = await export_to_pdf(data, analytics_type)
+        else:  # json
+            exported_data = {
+                'format': 'json',
+                'data': data,
+                'filename': f"course_{course_id}_{analytics_type}_{time_range}.json"
+            }
+        
+        return {
+            'courseId': course_id,
+            'exportType': analytics_type,
+            'format': format_type,
+            'timeRange': time_range,
+            'exportData': exported_data,
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Export course analytics error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_individual_graphs(token: str, course_id: str, student_id: str, graph_type: str = 'progress', time_range: str = '30d') -> dict:
+    """Get individual student graphs and analytics."""
+    try:
+        # Verify user token
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get student progress data
+        from services.achieveup_service import achieveup_progress_collection, achieveup_skill_matrices_collection
+        from datetime import datetime, timedelta
+        
+        # Calculate date range
+        end_date = datetime.utcnow()
+        if time_range == '7d':
+            start_date = end_date - timedelta(days=7)
+        elif time_range == '90d':
+            start_date = end_date - timedelta(days=90)
+        elif time_range == '1y':
+            start_date = end_date - timedelta(days=365)
+        else:  # 30d default
+            start_date = end_date - timedelta(days=30)
+        
+        # Get progress data
+        progress_data = await achieveup_progress_collection.find({
+            'student_id': student_id,
+            'course_id': course_id,
+            'updated_at': {'$gte': start_date, '$lte': end_date}
+        }).sort([('updated_at', 1)]).to_list(length=None)
+        
+        # Get skill matrix
+        skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+        course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        
+        # Generate graphs based on type
+        if graph_type == 'progress':
+            graph_data = generate_progress_graph(progress_data, course_skills, time_range)
+        elif graph_type == 'performance':
+            graph_data = generate_performance_graph(progress_data, course_skills, time_range)
+        elif graph_type == 'skills':
+            graph_data = generate_skills_graph(progress_data, course_skills, time_range)
+        else:
+            graph_data = generate_overview_graph(progress_data, course_skills, time_range)
+        
+        return {
+            'studentId': student_id,
+            'courseId': course_id,
+            'graphType': graph_type,
+            'timeRange': time_range,
+            'graphData': graph_data,
+            'metadata': {
+                'totalDataPoints': len(progress_data),
+                'totalSkills': len(course_skills),
+                'dateRange': {
+                    'start': start_date.isoformat(),
+                    'end': end_date.isoformat()
+                }
+            },
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Get individual graphs error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+def calculate_student_risk_level(progress_data: list, total_skills: int, time_range: str) -> str:
+    """Calculate risk level for a student based on their progress data."""
+    if not progress_data or total_skills == 0:
+        return 'high'
+    
+    # Calculate completion rate
+    completed = len([p for p in progress_data if p.get('completed', False)])
+    completion_rate = completed / total_skills
+    
+    # Calculate average score
+    scores = [p.get('score', 0) for p in progress_data if 'score' in p]
+    avg_score = sum(scores) / len(scores) if scores else 0
+    
+    # Calculate activity frequency
+    from datetime import datetime, timedelta
+    recent_cutoff = datetime.utcnow() - timedelta(days=7)
+    recent_activity = len([p for p in progress_data if p.get('updated_at', datetime.min) > recent_cutoff])
+    
+    # Risk scoring
+    risk_score = 0
+    
+    # Completion rate factor (40% weight)
+    if completion_rate >= 0.8:
+        risk_score += 0
+    elif completion_rate >= 0.6:
+        risk_score += 1
+    elif completion_rate >= 0.4:
+        risk_score += 2
+    else:
+        risk_score += 3
+    
+    # Average score factor (30% weight)
+    if avg_score >= 80:
+        risk_score += 0
+    elif avg_score >= 70:
+        risk_score += 1
+    elif avg_score >= 60:
+        risk_score += 2
+    else:
+        risk_score += 3
+    
+    # Activity factor (30% weight)
+    if recent_activity >= 3:
+        risk_score += 0
+    elif recent_activity >= 1:
+        risk_score += 1
+    else:
+        risk_score += 2
+    
+    # Determine risk level
+    if risk_score <= 2:
+        return 'low'
+    elif risk_score <= 5:
+        return 'medium'
+    else:
+        return 'high'
+
+def analyze_risk_factors(student_analytics: list, threshold: float) -> dict:
+    """Analyze common risk factors across students."""
+    if not student_analytics:
+        return {}
+    
+    total_students = len(student_analytics)
+    
+    # Calculate factor frequencies
+    low_completion = len([s for s in student_analytics if s['progressPercentage'] < threshold * 100])
+    low_scores = len([s for s in student_analytics if s['averageScore'] < 70])
+    inactive_students = len([s for s in student_analytics if s['activityCount'] < 3])
+    
+    return {
+        'lowCompletion': {
+            'count': low_completion,
+            'percentage': round(low_completion / total_students * 100, 1),
+            'description': f'Students with less than {threshold * 100}% completion rate'
+        },
+        'lowScores': {
+            'count': low_scores,
+            'percentage': round(low_scores / total_students * 100, 1),
+            'description': 'Students with average scores below 70%'
+        },
+        'inactiveStudents': {
+            'count': inactive_students,
+            'percentage': round(inactive_students / total_students * 100, 1),
+            'description': 'Students with fewer than 3 recent activities'
+        }
+    }
+
+def generate_risk_recommendations(high_risk: list, medium_risk: list, risk_factors: dict) -> list:
+    """Generate recommendations based on risk assessment."""
+    recommendations = []
+    
+    if high_risk:
+        recommendations.append({
+            'priority': 'high',
+            'type': 'intervention',
+            'message': f'{len(high_risk)} students need immediate attention. Consider one-on-one meetings or additional support.',
+            'action': 'Schedule individual meetings with high-risk students',
+            'students': [s['studentId'] for s in high_risk[:5]]  # Limit to top 5
+        })
+    
+    if medium_risk:
+        recommendations.append({
+            'priority': 'medium',
+            'type': 'monitoring',
+            'message': f'{len(medium_risk)} students should be monitored closely. Consider group study sessions or additional resources.',
+            'action': 'Provide additional learning resources and monitor progress',
+            'students': [s['studentId'] for s in medium_risk[:3]]  # Limit to top 3
+        })
+    
+    # Factor-specific recommendations
+    if risk_factors.get('lowCompletion', {}).get('percentage', 0) > 30:
+        recommendations.append({
+            'priority': 'medium',
+            'type': 'engagement',
+            'message': 'Many students have low completion rates. Consider reviewing assignment difficulty or providing clearer instructions.',
+            'action': 'Review course pacing and provide completion incentives'
+        })
+    
+    if risk_factors.get('inactiveStudents', {}).get('percentage', 0) > 25:
+        recommendations.append({
+            'priority': 'medium',
+            'type': 'engagement',
+            'message': 'Many students are inactive. Consider sending engagement reminders or creating more interactive content.',
+            'action': 'Implement engagement strategies and regular check-ins'
+        })
+    
+    return recommendations
+
+async def calculate_risk_trends(course_id: str, time_range: str) -> dict:
+    """Calculate risk trends over time for a course."""
+    try:
+        from services.achieveup_service import achieveup_progress_collection
+        from datetime import datetime, timedelta
+        
+        # Get historical data for trend calculation
+        end_date = datetime.utcnow()
+        if time_range == '7d':
+            periods = 7
+            delta = timedelta(days=1)
+        elif time_range == '30d':
+            periods = 30
+            delta = timedelta(days=1)
+        elif time_range == '90d':
+            periods = 12
+            delta = timedelta(days=7)
+        else:  # 1y
+            periods = 12
+            delta = timedelta(days=30)
+        
+        trend_data = []
+        for i in range(periods):
+            period_end = end_date - (delta * i)
+            period_start = period_end - delta
+            
+            # Get progress data for this period
+            progress_count = await achieveup_progress_collection.count_documents({
+                'course_id': course_id,
+                'updated_at': {'$gte': period_start, '$lte': period_end}
+            })
+            
+            trend_data.append({
+                'period': period_start.strftime('%Y-%m-%d'),
+                'activity': progress_count,
+                'date': period_start.isoformat()
+            })
+        
+        trend_data.reverse()  # Chronological order
+        
+        return {
+            'periods': periods,
+            'timeRange': time_range,
+            'data': trend_data,
+            'summary': {
+                'totalActivity': sum([t['activity'] for t in trend_data]),
+                'averageActivity': round(sum([t['activity'] for t in trend_data]) / len(trend_data), 1) if trend_data else 0,
+                'trend': calculate_trend_direction(trend_data)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Calculate risk trends error: {str(e)}")
+        return {'error': 'Error calculating trends'}
+
+def calculate_trend_direction(trend_data: list) -> str:
+    """Calculate if trend is increasing, decreasing, or stable."""
+    if len(trend_data) < 2:
+        return 'insufficient_data'
+    
+    first_half = trend_data[:len(trend_data)//2]
+    second_half = trend_data[len(trend_data)//2:]
+    
+    first_avg = sum([t['activity'] for t in first_half]) / len(first_half)
+    second_avg = sum([t['activity'] for t in second_half]) / len(second_half)
+    
+    if second_avg > first_avg * 1.1:
+        return 'increasing'
+    elif second_avg < first_avg * 0.9:
+        return 'decreasing'
+    else:
+        return 'stable'
+
+def export_to_csv(data: dict, analytics_type: str) -> dict:
+    """Export analytics data to CSV format."""
+    import csv
+    import io
+    
+    output = io.StringIO()
+    
+    if analytics_type == 'students':
+        # Export student analytics to CSV
+        fieldnames = ['studentId', 'studentName', 'email', 'progressPercentage', 'completedSkills', 'totalSkills', 'averageScore', 'riskLevel', 'lastActivity', 'activityCount']
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for student in data.get('studentAnalytics', []):
+            row = {k: v for k, v in student.items() if k in fieldnames}
+            writer.writerow(row)
+    
+    csv_content = output.getvalue()
+    output.close()
+    
+    return {
+        'format': 'csv',
+        'content': csv_content,
+        'filename': f"analytics_{analytics_type}.csv"
+    }
+
+async def export_to_pdf(data: dict, analytics_type: str) -> dict:
+    """Export analytics data to PDF format."""
+    # This would require a PDF library like reportlab
+    # For now, return a placeholder
+    return {
+        'format': 'pdf',
+        'content': 'PDF export not yet implemented',
+        'filename': f"analytics_{analytics_type}.pdf",
+        'note': 'PDF export feature coming soon'
+    }
+
+def generate_progress_graph(progress_data: list, course_skills: list, time_range: str) -> dict:
+    """Generate progress over time graph data."""
+    from datetime import datetime, timedelta
+    
+    # Group progress by date
+    daily_progress = {}
+    for progress in progress_data:
+        date = progress.get('updated_at', datetime.now()).strftime('%Y-%m-%d')
+        if date not in daily_progress:
+            daily_progress[date] = 0
+        daily_progress[date] += 1
+    
+    # Create time series data
+    dates = sorted(daily_progress.keys())
+    cumulative_progress = 0
+    graph_data = []
+    
+    for date in dates:
+        cumulative_progress += daily_progress[date]
+        graph_data.append({
+            'date': date,
+            'progress': cumulative_progress,
+            'dailyActivity': daily_progress[date]
+        })
+    
+    return {
+        'type': 'line',
+        'title': 'Progress Over Time',
+        'xAxis': 'Date',
+        'yAxis': 'Cumulative Progress',
+        'data': graph_data,
+        'summary': {
+            'totalProgress': cumulative_progress,
+            'peakDay': max(daily_progress, key=daily_progress.get) if daily_progress else None,
+            'averageDailyActivity': round(sum(daily_progress.values()) / len(daily_progress), 1) if daily_progress else 0
+        }
+    }
+
+def generate_performance_graph(progress_data: list, course_skills: list, time_range: str) -> dict:
+    """Generate performance scores graph data."""
+    # Group by skill and calculate average scores
+    skill_performance = {}
+    for progress in progress_data:
+        skill = progress.get('skill', 'Unknown')
+        score = progress.get('score', 0)
+        
+        if skill not in skill_performance:
+            skill_performance[skill] = []
+        skill_performance[skill].append(score)
+    
+    # Calculate averages
+    graph_data = []
+    for skill, scores in skill_performance.items():
+        avg_score = sum(scores) / len(scores)
+        graph_data.append({
+            'skill': skill,
+            'averageScore': round(avg_score, 1),
+            'attempts': len(scores),
+            'bestScore': max(scores),
+            'latestScore': scores[-1] if scores else 0
+        })
+    
+    # Sort by average score
+    graph_data.sort(key=lambda x: x['averageScore'], reverse=True)
+    
+    return {
+        'type': 'bar',
+        'title': 'Performance by Skill',
+        'xAxis': 'Skills',
+        'yAxis': 'Average Score',
+        'data': graph_data,
+        'summary': {
+            'overallAverage': round(sum([d['averageScore'] for d in graph_data]) / len(graph_data), 1) if graph_data else 0,
+            'bestSkill': graph_data[0]['skill'] if graph_data else None,
+            'skillsAttempted': len(graph_data),
+            'totalSkills': len(course_skills)
+        }
+    }
+
+def generate_skills_graph(progress_data: list, course_skills: list, time_range: str) -> dict:
+    """Generate skills mastery graph data."""
+    # Calculate mastery level for each skill
+    skill_mastery = {}
+    for skill in course_skills:
+        skill_progress = [p for p in progress_data if p.get('skill') == skill]
+        
+        if skill_progress:
+            completed = len([p for p in skill_progress if p.get('completed', False)])
+            total_attempts = len(skill_progress)
+            avg_score = sum([p.get('score', 0) for p in skill_progress]) / len(skill_progress)
+            mastery_level = calculate_mastery_level(completed, total_attempts, avg_score)
+        else:
+            mastery_level = 'not_attempted'
+            avg_score = 0
+            completed = 0
+            total_attempts = 0
+        
+        skill_mastery[skill] = {
+            'skill': skill,
+            'masteryLevel': mastery_level,
+            'averageScore': round(avg_score, 1),
+            'completed': completed,
+            'totalAttempts': total_attempts,
+            'completionRate': round(completed / total_attempts * 100, 1) if total_attempts > 0 else 0
+        }
+    
+    return {
+        'type': 'radar',
+        'title': 'Skills Mastery Overview',
+        'data': list(skill_mastery.values()),
+        'summary': {
+            'masteredSkills': len([s for s in skill_mastery.values() if s['masteryLevel'] == 'mastered']),
+            'developingSkills': len([s for s in skill_mastery.values() if s['masteryLevel'] == 'developing']),
+            'beginnerSkills': len([s for s in skill_mastery.values() if s['masteryLevel'] == 'beginner']),
+            'notAttempted': len([s for s in skill_mastery.values() if s['masteryLevel'] == 'not_attempted']),
+            'overallMastery': calculate_overall_mastery(list(skill_mastery.values()))
+        }
+    }
+
+def generate_overview_graph(progress_data: list, course_skills: list, time_range: str) -> dict:
+    """Generate overview dashboard graph data."""
+    # Combine multiple graph types for overview
+    progress_graph = generate_progress_graph(progress_data, course_skills, time_range)
+    performance_graph = generate_performance_graph(progress_data, course_skills, time_range)
+    skills_graph = generate_skills_graph(progress_data, course_skills, time_range)
+    
+    return {
+        'type': 'dashboard',
+        'title': 'Student Overview Dashboard',
+        'components': {
+            'progress': progress_graph,
+            'performance': performance_graph,
+            'skills': skills_graph
+        },
+        'summary': {
+            'totalActivities': len(progress_data),
+            'skillsWorkedOn': len(set([p.get('skill') for p in progress_data if p.get('skill')])),
+            'averageScore': round(sum([p.get('score', 0) for p in progress_data]) / len(progress_data), 1) if progress_data else 0,
+            'timeRange': time_range
+        }
+    }
+
+def calculate_mastery_level(completed: int, total_attempts: int, avg_score: float) -> str:
+    """Calculate mastery level based on completion and performance."""
+    if total_attempts == 0:
+        return 'not_attempted'
+    
+    completion_rate = completed / total_attempts
+    
+    if completion_rate >= 0.8 and avg_score >= 85:
+        return 'mastered'
+    elif completion_rate >= 0.6 and avg_score >= 70:
+        return 'developing'
+    elif completion_rate >= 0.3 or avg_score >= 60:
+        return 'beginner'
+    else:
+        return 'struggling'
+
+def calculate_overall_mastery(skill_data: list) -> str:
+    """Calculate overall mastery level across all skills."""
+    if not skill_data:
+        return 'no_data'
+    
+    mastery_levels = [s['masteryLevel'] for s in skill_data]
+    mastered_count = len([l for l in mastery_levels if l == 'mastered'])
+    developing_count = len([l for l in mastery_levels if l == 'developing'])
+    
+    total_skills = len(skill_data)
+    mastery_rate = mastered_count / total_skills
+    developing_rate = developing_count / total_skills
+    
+    if mastery_rate >= 0.7:
+        return 'advanced'
+    elif mastery_rate >= 0.4 or (mastery_rate + developing_rate) >= 0.7:
+        return 'proficient'
+    elif (mastery_rate + developing_rate) >= 0.4:
+        return 'developing'
+    else:
+        return 'beginner' 

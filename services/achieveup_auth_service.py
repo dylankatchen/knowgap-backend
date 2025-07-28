@@ -31,17 +31,41 @@ async def verify_password(password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
     return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-def create_jwt_token(user_id: str, email: str, role: str) -> str:
-    """Create a JWT token for a user."""
+def create_jwt_token(user_id: str, email: str, role: str, canvas_token_type: str = 'student') -> str:
+    """Create a JWT token for a user with Canvas token type."""
     payload = {
         'user_id': user_id,
         'email': email,
         'role': role,
+        'canvas_token_type': canvas_token_type,
         'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
         'iat': datetime.utcnow()
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     return token
+
+def generate_jwt_token(user_id: str) -> str:
+    """Generate a new JWT token for token refresh."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from config import Config
+    
+    async def get_user_info():
+        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        db = client[Config.DATABASE]
+        users_collection = db["AchieveUp_Users"]
+        user = await users_collection.find_one({'user_id': user_id})
+        return user
+    
+    import asyncio
+    user = asyncio.run(get_user_info())
+    if user:
+        return create_jwt_token(
+            user['user_id'], 
+            user['email'], 
+            user['role'], 
+            user.get('canvas_token_type', 'student')
+        )
+    return None
 
 async def verify_jwt_token(token: str) -> dict:
     """Verify and decode a JWT token."""
@@ -69,6 +93,10 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
         salt = bcrypt.gensalt()
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt)
         
+        # Determine role based on canvas_token_type
+        role = 'instructor' if canvas_token_type == 'instructor' else 'student'
+        canvas_token_type = canvas_token_type or 'student'
+        
         # Create user document
         user_id = str(uuid.uuid4())
         user_doc = {
@@ -76,15 +104,11 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             'name': name,
             'email': email,
             'password': hashed_password.decode('utf-8'),
-            'role': 'student',  # Default role
+            'role': role,
+            'canvas_token_type': canvas_token_type,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
-        
-        if canvas_token_type:
-            user_doc['canvas_token_type'] = canvas_token_type
-        else:
-            user_doc['canvas_token_type'] = 'student'
         
         # Handle Canvas API token if provided
         if canvas_api_token:
@@ -98,7 +122,7 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
             
             # Validate token with Canvas API
             from services.achieveup_canvas_service import validate_canvas_token
-            validation_result = await validate_canvas_token(canvas_api_token)
+            validation_result = await validate_canvas_token(canvas_api_token, canvas_token_type)
             
             if not validation_result['valid']:
                 return {
@@ -107,8 +131,10 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
                     'statusCode': 400
                 }
             
-            # Store the validated token
-            user_doc['canvas_api_token'] = canvas_api_token
+            # Store the validated token (encrypted)
+            from utils.encryption_utils import encrypt_token
+            encrypted_token = encrypt_token(canvas_api_token)
+            user_doc['canvas_api_token'] = encrypted_token
             user_doc['canvas_token_created_at'] = datetime.utcnow()
             user_doc['canvas_token_last_validated'] = datetime.utcnow()
         
@@ -116,16 +142,16 @@ async def achieveup_signup(name: str, email: str, password: str, canvas_api_toke
         await achieveup_users_collection.insert_one(user_doc)
         
         # Generate JWT token
-        token = create_jwt_token(user_id, email, user_doc['role'])
+        token = create_jwt_token(user_id, email, role, canvas_token_type)
         
         # Return user info (without password and Canvas token)
         user_info = {
             'id': user_id,
             'name': name,
             'email': email,
-            'role': user_doc['role'],
+            'role': role,
             'hasCanvasToken': bool(canvas_api_token),
-            'canvasTokenType': user_doc.get('canvas_token_type', 'student')
+            'canvasTokenType': canvas_token_type
         }
         
         return {
@@ -157,8 +183,13 @@ async def achieveup_login(email: str, password: str) -> dict:
                 'statusCode': 401
             }
         
-        # Generate JWT token
-        token = create_jwt_token(user['user_id'], user['email'], user['role'])
+        # Generate JWT token with Canvas token type
+        token = create_jwt_token(
+            user['user_id'], 
+            user['email'], 
+            user['role'], 
+            user.get('canvas_token_type', 'student')
+        )
         
         # Return user info (without password and Canvas token)
         user_info = {
@@ -370,12 +401,64 @@ async def achieveup_change_password(token: str, current_password: str, new_passw
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def get_user_canvas_token(user_id: str) -> str:
-    """Get user's Canvas API token (for internal use only)."""
+    """Get decrypted Canvas API token for a user."""
     try:
         user = await achieveup_users_collection.find_one({'user_id': user_id})
         if user and user.get('canvas_api_token'):
-            return user['canvas_api_token']
+            from utils.encryption_utils import decrypt_token
+            return decrypt_token(user['canvas_api_token'])
         return None
     except Exception as e:
-        logger.error(f"Get Canvas token error: {str(e)}")
-        return None 
+        logger.error(f"Error getting Canvas token: {str(e)}")
+        return None
+
+def require_instructor_role(func):
+    """Decorator to require instructor role for endpoints."""
+    async def wrapper(*args, **kwargs):
+        try:
+            # Extract token from request headers
+            from quart import request
+            auth_header = request.headers.get('Authorization')
+            if not auth_header or not auth_header.startswith('Bearer '):
+                return {
+                    'error': 'Missing token',
+                    'message': 'Authorization header with Bearer token is required',
+                    'statusCode': 401
+                }, 401
+            
+            token = auth_header.split(' ')[1]
+            
+            # Verify token
+            user_result = await achieveup_verify_token(token)
+            if 'error' in user_result:
+                return user_result, user_result['statusCode']
+            
+            # Check role and canvas token type
+            user = user_result['user']
+            if user['role'] != 'instructor':
+                return {
+                    'error': 'Insufficient permissions',
+                    'message': 'Instructor role required',
+                    'statusCode': 403
+                }, 403
+            
+            if user['canvasTokenType'] != 'instructor':
+                return {
+                    'error': 'Invalid Canvas token type',
+                    'message': 'Instructor Canvas token required',
+                    'statusCode': 403
+                }, 403
+            
+            # Add user info to function kwargs
+            kwargs['current_user'] = user
+            return await func(*args, **kwargs)
+            
+        except Exception as e:
+            logger.error(f"Role validation error: {str(e)}")
+            return {
+                'error': 'Internal server error',
+                'message': 'Authorization check failed',
+                'statusCode': 500
+            }, 500
+    
+    return wrapper 

@@ -638,3 +638,377 @@ def calculate_confidence_score(question_text: str, suggested_skills: list) -> fl
     
     return min(base_confidence + length_factor, 1.0)
  
+async def get_instructor_dashboard(token: str) -> dict:
+    """Get instructor dashboard data with course overview and analytics."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        user_id = user_result['user']['id']
+        
+        # Get instructor's Canvas courses
+        from services.achieveup_canvas_service import get_instructor_courses
+        from services.achieveup_auth_service import get_user_canvas_token
+        
+        canvas_token = await get_user_canvas_token(user_id)
+        if not canvas_token:
+            return {
+                'error': 'No Canvas token',
+                'message': 'No Canvas API token found for user',
+                'statusCode': 400
+            }
+        
+        courses_result = await get_instructor_courses(canvas_token)
+        if 'error' in courses_result:
+            return courses_result
+        
+        courses = courses_result if isinstance(courses_result, list) else []
+        
+        # Get skill matrices count
+        matrices_count = await achieveup_skill_matrices_collection.count_documents({})
+        
+        # Get recent activity
+        recent_matrices = await achieveup_skill_matrices_collection.find({}).sort([('created_at', -1)]).limit(5).to_list(length=5)
+        
+        dashboard_data = {
+            'courses': courses,
+            'totalCourses': len(courses),
+            'totalSkillMatrices': matrices_count,
+            'recentMatrices': recent_matrices,
+            'lastUpdated': datetime.utcnow().isoformat()
+        }
+        
+        return dashboard_data
+        
+    except Exception as e:
+        logger.error(f"Get instructor dashboard error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_instructor_course_students(token: str, course_id: str) -> dict:
+    """Get list of students in instructor's course."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        user_id = user_result['user']['id']
+        
+        # Get Canvas API token
+        from services.achieveup_auth_service import get_user_canvas_token
+        canvas_token = await get_user_canvas_token(user_id)
+        if not canvas_token:
+            return {
+                'error': 'No Canvas token',
+                'message': 'No Canvas API token found for user',
+                'statusCode': 400
+            }
+        
+        # Get students from Canvas
+        from services.achieveup_canvas_service import get_course_students
+        students_result = await get_course_students(canvas_token, course_id)
+        
+        return students_result
+        
+    except Exception as e:
+        logger.error(f"Get instructor course students error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_instructor_student_analytics(token: str, course_id: str) -> dict:
+    """Get student analytics for instructor's course."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get students for the course
+        students_result = await get_instructor_course_students(token, course_id)
+        if 'error' in students_result:
+            return students_result
+        
+        students = students_result if isinstance(students_result, list) else []
+        
+        # Get skill matrix for course
+        skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+        
+        # Get progress data for students
+        student_analytics = []
+        for student in students:
+            student_id = student.get('id')
+            progress_data = await achieveup_progress_collection.find({'student_id': student_id, 'course_id': course_id}).to_list(length=None)
+            
+            analytics = {
+                'studentId': student_id,
+                'studentName': student.get('name', 'Unknown'),
+                'email': student.get('email', ''),
+                'progressCount': len(progress_data),
+                'skillsCompleted': len([p for p in progress_data if p.get('completed', False)]),
+                'lastActivity': max([p.get('updated_at', datetime.min) for p in progress_data] + [datetime.min])
+            }
+            student_analytics.append(analytics)
+        
+        return {
+            'courseId': course_id,
+            'totalStudents': len(students),
+            'skillMatrix': skill_matrix,
+            'studentAnalytics': student_analytics,
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Get instructor student analytics error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
+    """Generate AI-powered skill suggestions for a course."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Import AI service
+        from services.achieveup_ai_service import suggest_skills_for_course
+        
+        # Generate skills
+        skills = await suggest_skills_for_course(course_data)
+        
+        return {
+            'courseId': course_data.get('courseId'),
+            'courseName': course_data.get('courseName'),
+            'suggestedSkills': skills,
+            'generatedAt': datetime.utcnow().isoformat(),
+            'method': 'ai' if any('relevance' in skill and skill['relevance'] > 0.85 for skill in skills) else 'fallback'
+        }
+        
+    except Exception as e:
+        logger.error(f"AI skill suggestion error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def analyze_questions_with_ai(token: str, questions: list) -> dict:
+    """Analyze questions using AI for complexity and skill mapping."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Import AI service
+        from services.achieveup_ai_service import analyze_questions
+        
+        # Analyze questions
+        analysis_results = await analyze_questions(questions)
+        
+        return {
+            'totalQuestions': len(questions),
+            'analyses': analysis_results,
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"AI question analysis error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def bulk_assign_skills_with_ai(token: str, course_id: str, questions: list) -> dict:
+    """Perform bulk skill assignment using AI."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get course skill matrix
+        skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+        course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        
+        # Import AI service
+        from services.achieveup_ai_service import bulk_assign_skills
+        
+        # Perform bulk assignment
+        assignments = await bulk_assign_skills(course_id, None, questions, course_skills)
+        
+        # Store assignments in database
+        for question_id, skills in assignments.items():
+            if skills:  # Only store if there are skills assigned
+                assignment_doc = {
+                    'course_id': course_id,
+                    'question_id': question_id,
+                    'skills': skills,
+                    'ai_generated': True,
+                    'human_reviewed': False,
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                # Upsert the assignment
+                await achieveup_question_skills_collection.replace_one(
+                    {'question_id': question_id},
+                    assignment_doc,
+                    upsert=True
+                )
+        
+        return {
+            'courseId': course_id,
+            'assignedQuestions': len([q for q in assignments.values() if q]),
+            'totalQuestions': len(questions),
+            'assignments': assignments,
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Bulk AI skill assignment error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def analyze_questions_with_ai_instructor(token: str, questions: list) -> dict:
+    """Instructor-specific question analysis with enhanced features."""
+    try:
+        # Verify user token and instructor role
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Enhanced analysis for instructors
+        from services.achieveup_ai_service import analyze_questions
+        
+        analysis_results = await analyze_questions(questions)
+        
+        # Add instructor-specific insights
+        complexity_distribution = {
+            'low': len([a for a in analysis_results if a.get('complexity') == 'low']),
+            'medium': len([a for a in analysis_results if a.get('complexity') == 'medium']),
+            'high': len([a for a in analysis_results if a.get('complexity') == 'high'])
+        }
+        
+        avg_confidence = sum([a.get('confidence', 0) for a in analysis_results]) / len(analysis_results) if analysis_results else 0
+        
+        return {
+            'totalQuestions': len(questions),
+            'analyses': analysis_results,
+            'complexityDistribution': complexity_distribution,
+            'averageConfidence': round(avg_confidence, 2),
+            'recommendations': generate_instructor_recommendations(complexity_distribution, avg_confidence),
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Instructor AI question analysis error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def bulk_assign_skills_with_ai_instructor(token: str, course_id: str, questions: list) -> dict:
+    """Instructor-specific bulk skill assignment with enhanced features."""
+    try:
+        # Verify user token and instructor role
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get course skill matrix
+        skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+        course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        
+        if not course_skills:
+            return {
+                'error': 'No skill matrix found',
+                'message': 'Please create a skill matrix for this course first',
+                'statusCode': 400
+            }
+        
+        # Import AI service
+        from services.achieveup_ai_service import bulk_assign_skills
+        
+        # Perform bulk assignment
+        assignments = await bulk_assign_skills(course_id, None, questions, course_skills)
+        
+        # Store assignments with instructor tracking
+        successful_assignments = 0
+        for question_id, skills in assignments.items():
+            if skills:
+                assignment_doc = {
+                    'course_id': course_id,
+                    'question_id': question_id,
+                    'skills': skills,
+                    'ai_generated': True,
+                    'human_reviewed': False,
+                    'assigned_by_instructor': True,
+                    'instructor_id': user_result['user']['id'],
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                await achieveup_question_skills_collection.replace_one(
+                    {'question_id': question_id},
+                    assignment_doc,
+                    upsert=True
+                )
+                successful_assignments += 1
+        
+        # Generate skill usage statistics
+        skill_usage = {}
+        for skills in assignments.values():
+            for skill in skills:
+                skill_usage[skill] = skill_usage.get(skill, 0) + 1
+        
+        return {
+            'courseId': course_id,
+            'assignedQuestions': successful_assignments,
+            'totalQuestions': len(questions),
+            'assignments': assignments,
+            'skillUsageStatistics': skill_usage,
+            'availableSkills': course_skills,
+            'assignmentSummary': {
+                'fullyAssigned': len([q for q in assignments.values() if len(q) > 0]),
+                'partiallyAssigned': len([q for q in assignments.values() if len(q) == 1]),
+                'multipleSkills': len([q for q in assignments.values() if len(q) > 1]),
+                'unassigned': len([q for q in assignments.values() if len(q) == 0])
+            },
+            'generatedAt': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Instructor bulk AI skill assignment error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+def generate_instructor_recommendations(complexity_dist: dict, avg_confidence: float) -> list:
+    """Generate recommendations for instructors based on analysis results."""
+    recommendations = []
+    
+    total_questions = sum(complexity_dist.values())
+    if total_questions == 0:
+        return recommendations
+    
+    # Complexity distribution recommendations
+    high_ratio = complexity_dist['high'] / total_questions
+    low_ratio = complexity_dist['low'] / total_questions
+    
+    if high_ratio > 0.6:
+        recommendations.append({
+            'type': 'complexity',
+            'priority': 'medium',
+            'message': 'Many questions are high complexity. Consider adding some lower complexity questions for skill building.'
+        })
+    elif low_ratio > 0.6:
+        recommendations.append({
+            'type': 'complexity',
+            'priority': 'low',
+            'message': 'Most questions are low complexity. Consider adding more challenging questions to assess higher-order thinking.'
+        })
+    
+    # Confidence recommendations
+    if avg_confidence < 0.6:
+        recommendations.append({
+            'type': 'confidence',
+            'priority': 'high',
+            'message': 'Low confidence in skill mapping. Consider reviewing question content or updating skill matrix.'
+        })
+    elif avg_confidence > 0.85:
+        recommendations.append({
+            'type': 'confidence',
+            'priority': 'low',
+            'message': 'High confidence in skill mapping. Questions align well with course skills.'
+        })
+    
+    return recommendations
+ 
