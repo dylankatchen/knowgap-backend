@@ -913,9 +913,9 @@ async def ai_suggest_skills_route():
             'statusCode': 500
         }), 500
 
-@achieveup_bp.route('/ai/bulk-assign', methods=['POST'])
-async def ai_bulk_assign_route():
-    """Bulk assign skills to questions using AI. (AchieveUp only)"""
+@achieveup_bp.route('/achieveup/ai/suggest-skills', methods=['POST'])
+async def achieveup_ai_suggest_skills_route():
+    """AI-powered skill suggestions for course (frontend-requested endpoint). (AchieveUp only)"""
     try:
         # Get token from Authorization header
         auth_header = request.headers.get('Authorization')
@@ -936,19 +936,26 @@ async def ai_bulk_assign_route():
                 'statusCode': 400
             }), 400
         
-        course_id = data.get('course_id')
-        questions = data.get('questions', [])
+        course_id = data.get('courseId')
+        course_name = data.get('courseName')
+        course_code = data.get('courseCode')
+        course_description = data.get('courseDescription', '')
         
-        if not course_id or not questions:
+        if not course_id or not course_name or not course_code:
             return jsonify({
                 'error': 'Missing required fields',
-                'message': 'Course ID and questions array are required',
+                'message': 'courseId, courseName, and courseCode are required',
                 'statusCode': 400
             }), 400
         
-        # Call service for bulk assignment
-        from services.achieveup_service import bulk_assign_skills_with_ai
-        result = await bulk_assign_skills_with_ai(token, course_id, questions)
+        # Call the AI service
+        from services.achieveup_service import suggest_course_skills_ai
+        result = await suggest_course_skills_ai(token, {
+            'courseId': course_id,
+            'courseName': course_name,
+            'courseCode': course_code,
+            'courseDescription': course_description
+        })
         
         if 'error' in result:
             return jsonify({
@@ -957,7 +964,133 @@ async def ai_bulk_assign_route():
                 'statusCode': result['statusCode']
             }), result['statusCode']
         
-        return jsonify(result), 200
+        # Format response to match frontend expectations
+        if 'skills' in result:
+            return jsonify(result['skills']), 200
+        else:
+            return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/ai/analyze-questions', methods=['POST'])
+async def achieveup_ai_analyze_questions_route():
+    """AI-powered question analysis (frontend-requested endpoint). (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        data = await request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'Invalid request',
+                'message': 'Request body is required',
+                'statusCode': 400
+            }), 400
+        
+        course_id = data.get('courseId')
+        quiz_id = data.get('quizId')
+        questions = data.get('questions', [])
+        
+        if not course_id or not quiz_id or not questions:
+            return jsonify({
+                'error': 'Missing required fields',
+                'message': 'courseId, quizId, and questions are required',
+                'statusCode': 400
+            }), 400
+        
+        # Call the AI service
+        from services.achieveup_service import analyze_questions_with_ai
+        result = await analyze_questions_with_ai(token, questions)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        # Format response for frontend
+        formatted_results = []
+        if 'analyses' in result:
+            for analysis in result['analyses']:
+                formatted_results.append({
+                    'questionId': analysis.get('questionId', ''),
+                    'complexity': analysis.get('complexity', 'medium'),
+                    'suggestedSkills': analysis.get('suggestedSkills', []),
+                    'confidence': analysis.get('confidence', 0.5)
+                })
+        
+        return jsonify(formatted_results), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/ai/bulk-assign', methods=['POST'])
+async def achieveup_ai_bulk_assign_route():
+    """AI-powered bulk skill assignment (frontend-requested endpoint). (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        data = await request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'Invalid request',
+                'message': 'Request body is required',
+                'statusCode': 400
+            }), 400
+        
+        course_id = data.get('courseId')
+        quiz_id = data.get('quizId')
+        
+        if not course_id or not quiz_id:
+            return jsonify({
+                'error': 'Missing required fields',
+                'message': 'courseId and quizId are required',
+                'statusCode': 400
+            }), 400
+        
+        # Call the AI service for bulk assignment
+        from services.achieveup_service import bulk_assign_skills_with_ai
+        result = await bulk_assign_skills_with_ai(token, course_id, quiz_id)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        # Return the assignments in the format expected by frontend
+        if 'assignments' in result:
+            return jsonify(result['assignments']), 200
+        else:
+            return jsonify(result), 200
         
     except Exception as e:
         return jsonify({
@@ -1030,4 +1163,110 @@ async def instructor_bulk_assign_skills_with_ai_route():
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
+ 
+@achieveup_bp.route('/achieveup/progress/<student_id>', methods=['GET'])
+async def get_student_progress_simple_route(student_id):
+    """Get student progress (frontend-requested endpoint). (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # Get course_id from query parameters or use default
+        course_id = request.args.get('course_id', 'default_course')
+        
+        # Call service
+        result = await get_student_progress(token, student_id, course_id)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/instructor/courses/<course_id>/student-analytics', methods=['GET'])
+async def get_course_student_analytics_route(course_id):
+    """Get student analytics for a course (frontend-requested endpoint). (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # Call analytics service
+        from services.analytics_service import get_course_students_analytics
+        result = await get_course_students_analytics(token, course_id)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result['error'],
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+        
+        # Format for frontend expectations
+        formatted_result = {
+            'students': [],
+            'skillDistribution': {},
+            'averageScores': {}
+        }
+        
+        if 'analytics' in result and 'students' in result['analytics']:
+            for student in result['analytics']['students']:
+                formatted_student = {
+                    'id': student.get('studentId', student.get('id', '')),
+                    'name': student.get('name', ''),
+                    'progress': student.get('overallProgress', 0),
+                    'skillsMastered': len([score for score in student.get('skillScores', {}).values() if score >= 80]),
+                    'badgesEarned': 0,  # Default value
+                    'riskLevel': student.get('riskLevel', 'low')
+                }
+                formatted_result['students'].append(formatted_student)
+                
+                # Add to skill distribution and averages
+                for skill, score in student.get('skillScores', {}).items():
+                    if skill not in formatted_result['skillDistribution']:
+                        formatted_result['skillDistribution'][skill] = 0
+                        formatted_result['averageScores'][skill] = []
+                    formatted_result['skillDistribution'][skill] += 1
+                    formatted_result['averageScores'][skill].append(score)
+        
+        # Calculate averages
+        for skill, scores in formatted_result['averageScores'].items():
+            if scores:
+                formatted_result['averageScores'][skill] = sum(scores) / len(scores)
+            else:
+                formatted_result['averageScores'][skill] = 0
+        
+        return jsonify(formatted_result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
  
