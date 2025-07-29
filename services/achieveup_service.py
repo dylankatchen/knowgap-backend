@@ -575,14 +575,154 @@ async def get_question_suggestions(token: str, question_id: str) -> dict:
         if 'error' in user_result:
             return user_result
         
-        # Get question from database (assuming questions are stored)
-        # For now, return mock suggestions
-        suggestions = ['problem_solving', 'critical_thinking', 'technical_skills']
-        confidence = 0.85
+        # Get question data from demo service
+        from services.achieveup_canvas_demo_service import get_demo_quiz_questions
+        
+        # Extract quiz_id from question_id (questions are typically named like quiz_demo_001_1_q1)
+        # Try to find the question in demo data
+        question_data = None
+        course_id = None
+        
+        # Check all demo quizzes for this question
+        demo_quizzes = {
+            "quiz_demo_001_1": "demo_001",
+            "quiz_demo_001_2": "demo_001", 
+            "quiz_demo_002_1": "demo_002",
+            "quiz_demo_003_1": "demo_003"
+        }
+        
+        for quiz_id, cid in demo_quizzes.items():
+            quiz_questions = await get_demo_quiz_questions(quiz_id)
+            for q in quiz_questions:
+                if q.get('id') == question_id or question_id in q.get('id', ''):
+                    question_data = q
+                    course_id = cid
+                    break
+            if question_data:
+                break
+        
+        # If no specific question found, use question_id to determine context
+        if not question_data:
+            if 'demo_001' in question_id or 'web' in question_id.lower():
+                course_id = 'demo_001'
+            elif 'demo_002' in question_id or 'database' in question_id.lower() or 'sql' in question_id.lower():
+                course_id = 'demo_002'
+            elif 'demo_003' in question_id or 'network' in question_id.lower():
+                course_id = 'demo_003'
+            else:
+                course_id = 'demo_001'  # Default to web development
+        
+        # Course-specific skill mappings
+        course_skills = {
+            'demo_001': [
+                'HTML/CSS Fundamentals',
+                'JavaScript Programming',
+                'DOM Manipulation', 
+                'Responsive Design',
+                'Web APIs'
+            ],
+            'demo_002': [
+                'SQL Fundamentals',
+                'Database Design',
+                'Data Normalization',
+                'Query Optimization',
+                'Stored Procedures'
+            ],
+            'demo_003': [
+                'Network Protocols (TCP/IP)',
+                'Network Security',
+                'Routing & Switching',
+                'Wireless Networks',
+                'Network Troubleshooting'
+            ]
+        }
+        
+        available_skills = course_skills.get(course_id, course_skills['demo_001'])
+        
+        # Analyze question content for skill suggestions
+        if question_data:
+            question_text = question_data.get('question_text', '').lower()
+            question_name = question_data.get('question_name', '').lower()
+            content = f"{question_text} {question_name}"
+        else:
+            content = question_id.lower()
+        
+        # Smart skill mapping based on content analysis
+        suggested_skills = []
+        confidence_scores = []
+        
+        if course_id == 'demo_001':  # Web Development
+            if any(keyword in content for keyword in ['javascript', 'js', 'variable', 'function', 'array', 'object']):
+                suggested_skills.append('JavaScript Programming')
+                confidence_scores.append(0.92)
+            if any(keyword in content for keyword in ['css', 'html', 'style', 'layout', 'grid', 'flexbox', 'responsive']):
+                suggested_skills.append('HTML/CSS Fundamentals')
+                confidence_scores.append(0.88)
+            if any(keyword in content for keyword in ['responsive', 'mobile', 'media', 'breakpoint']):
+                suggested_skills.append('Responsive Design')
+                confidence_scores.append(0.85)
+            if any(keyword in content for keyword in ['dom', 'element', 'event', 'manipulation']):
+                suggested_skills.append('DOM Manipulation')
+                confidence_scores.append(0.90)
+            if any(keyword in content for keyword in ['api', 'fetch', 'ajax', 'request', 'response']):
+                suggested_skills.append('Web APIs')
+                confidence_scores.append(0.87)
+                
+        elif course_id == 'demo_002':  # Database
+            if any(keyword in content for keyword in ['select', 'insert', 'update', 'delete', 'sql']):
+                suggested_skills.append('SQL Fundamentals')
+                confidence_scores.append(0.95)
+            if any(keyword in content for keyword in ['table', 'schema', 'design', 'entity', 'relationship']):
+                suggested_skills.append('Database Design')
+                confidence_scores.append(0.88)
+            if any(keyword in content for keyword in ['normal', '1nf', '2nf', '3nf', 'bcnf']):
+                suggested_skills.append('Data Normalization')
+                confidence_scores.append(0.92)
+            if any(keyword in content for keyword in ['index', 'optimize', 'performance', 'query plan']):
+                suggested_skills.append('Query Optimization')
+                confidence_scores.append(0.85)
+            if any(keyword in content for keyword in ['procedure', 'function', 'trigger', 'stored']):
+                suggested_skills.append('Stored Procedures')
+                confidence_scores.append(0.90)
+                
+        elif course_id == 'demo_003':  # Networking
+            if any(keyword in content for keyword in ['tcp', 'ip', 'protocol', 'packet', 'routing']):
+                suggested_skills.append('Network Protocols (TCP/IP)')
+                confidence_scores.append(0.93)
+            if any(keyword in content for keyword in ['security', 'firewall', 'encryption', 'vpn']):
+                suggested_skills.append('Network Security')
+                confidence_scores.append(0.89)
+            if any(keyword in content for keyword in ['router', 'switch', 'routing', 'switching']):
+                suggested_skills.append('Routing & Switching')
+                confidence_scores.append(0.91)
+            if any(keyword in content for keyword in ['wireless', 'wifi', '802.11', 'bluetooth']):
+                suggested_skills.append('Wireless Networks')
+                confidence_scores.append(0.86)
+            if any(keyword in content for keyword in ['troubleshoot', 'debug', 'diagnose', 'problem']):
+                suggested_skills.append('Network Troubleshooting')
+                confidence_scores.append(0.84)
+        
+        # If no specific matches, suggest 2-3 most relevant skills for the course
+        if not suggested_skills:
+            suggested_skills = available_skills[:3]
+            confidence_scores = [0.75, 0.70, 0.65]
+        
+        # Limit to top 3 suggestions
+        if len(suggested_skills) > 3:
+            # Sort by confidence and take top 3
+            skill_confidence_pairs = list(zip(suggested_skills, confidence_scores))
+            skill_confidence_pairs.sort(key=lambda x: x[1], reverse=True)
+            suggested_skills = [pair[0] for pair in skill_confidence_pairs[:3]]
+            confidence_scores = [pair[1] for pair in skill_confidence_pairs[:3]]
+        
+        # Calculate overall confidence
+        overall_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.75
         
         return {
-            'suggestions': suggestions,
-            'confidence': confidence
+            'suggestions': suggested_skills,
+            'confidence': round(overall_confidence, 2),
+            'course_id': course_id,
+            'available_skills': available_skills
         }
         
     except Exception as e:
