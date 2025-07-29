@@ -391,6 +391,11 @@ async def get_instructor_courses(canvas_token: str) -> dict:
 async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> dict:
     """Get all quizzes in a course for instructor."""
     try:
+        # Check if this is a demo token
+        from services.achieveup_canvas_demo_service import is_demo_token, get_demo_course_quizzes
+        if is_demo_token(canvas_token):
+            return await get_demo_course_quizzes(course_id)
+        
         headers = {
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
@@ -420,6 +425,11 @@ async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> di
 async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict:
     """Get all questions in a quiz for instructor."""
     try:
+        # Check if this is a demo token
+        from services.achieveup_canvas_demo_service import is_demo_token, get_demo_quiz_questions
+        if is_demo_token(canvas_token):
+            return await get_demo_quiz_questions(quiz_id)
+        
         headers = {
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
@@ -444,7 +454,7 @@ async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict
                     return {'error': f'Failed to fetch instructor quiz questions: {response.status}', 'statusCode': response.status}
     except Exception as e:
         logger.error(f"Get instructor quiz questions error: {str(e)}")
-        return {'error': 'Internal server error', 'statusCode': 500} 
+        return {'error': 'Internal server error', 'statusCode': 500}
 
 async def get_course_students(canvas_token: str, course_id: str) -> dict:
     """Get students enrolled in a course."""
