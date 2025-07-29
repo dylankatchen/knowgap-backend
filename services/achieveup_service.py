@@ -29,6 +29,19 @@ async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skil
         if 'error' in user_result:
             return user_result
         
+        # Get user info and verify instructor access
+        user = user_result['user']
+        user_role = user['role']
+        canvas_token_type = user.get('canvasTokenType', 'student')
+        
+        # Verify instructor access (consistent with other endpoints)
+        if user_role != 'instructor' or canvas_token_type != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+        
         # Check if matrix name already exists for this course (allow multiple matrices per course)
         existing_matrix = await achieveup_skill_matrices_collection.find_one({
             'course_id': course_id, 
@@ -126,11 +139,14 @@ async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
         if 'error' in user_result:
             return user_result
         
-        user_id = user_result.get('user_id')
-        user_role = user_result.get('role', 'student')
+        # Get user info from the correct structure
+        user = user_result['user']
+        user_id = user['id']
+        user_role = user['role']
+        canvas_token_type = user.get('canvasTokenType', 'student')
         
-        # Verify instructor access
-        if user_role != 'instructor':
+        # Verify instructor access (consistent with other endpoints)
+        if user_role != 'instructor' or canvas_token_type != 'instructor':
             return {
                 'error': 'Access denied',
                 'message': 'Instructor access required',
