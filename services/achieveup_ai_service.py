@@ -293,17 +293,31 @@ async def map_question_to_skills(question: Dict[str, Any], available_skills: Lis
     if not available_skills:
         available_skills = GENERIC_SKILLS
     
+    suggested_skills = []
+    
     try:
         # Try AI-based classification first
         if openai.api_key:
             ai_skills = await classify_question_skills_ai(question_text, available_skills)
             if ai_skills:
-                return ai_skills
+                suggested_skills = ai_skills
     except Exception as e:
         logger.error(f"AI skill classification failed: {str(e)}")
     
-    # Fallback to keyword-based matching
-    return classify_question_skills_keywords(question_text, available_skills)
+    # If AI didn't return skills, fallback to keyword-based matching
+    if not suggested_skills:
+        suggested_skills = classify_question_skills_keywords(question_text, available_skills)
+    
+    # Final safety net: If still no skills, ensure at least one suggestion
+    if not suggested_skills and available_skills:
+        # Use intelligent fallback based on question content and type
+        suggested_skills = get_fallback_skill_suggestion(question, available_skills)
+    
+    # Absolute last resort: return the first available skill
+    if not suggested_skills and available_skills:
+        suggested_skills = [available_skills[0]]
+    
+    return suggested_skills
 
 async def classify_question_skills_ai(question_text: str, available_skills: List[str]) -> List[str]:
     """Use OpenAI to classify question skills."""
@@ -351,6 +365,103 @@ async def classify_question_skills_ai(question_text: str, available_skills: List
         logger.error(f"AI skill classification error: {str(e)}")
         return None
 
+def get_fallback_skill_suggestion(question: Dict[str, Any], available_skills: List[str]) -> List[str]:
+    """Provide intelligent fallback skill suggestion when other methods fail."""
+    question_text = (question.get('question_text', '') or question.get('text', '')).lower()
+    question_type = question.get('type', '').lower()
+    
+    # Question type-based suggestions
+    if 'multiple_choice' in question_type:
+        # Multiple choice often tests fundamental concepts
+        for skill in available_skills:
+            if 'fundamental' in skill.lower() or 'basic' in skill.lower():
+                return [skill]
+    
+    elif 'essay' in question_type or 'short_answer' in question_type:
+        # Essay/short answer often requires applied knowledge
+        for skill in available_skills:
+            if any(word in skill.lower() for word in ['programming', 'design', 'development', 'analysis']):
+                return [skill]
+    
+    elif 'coding' in question_type or 'file_upload' in question_type:
+        # Coding questions likely programming-related
+        for skill in available_skills:
+            if 'programming' in skill.lower() or 'coding' in skill.lower():
+                return [skill]
+    
+    # Content-based broad matching (more aggressive than keyword matching)
+    content_skill_mapping = {
+        # Web Development indicators
+        ['web', 'html', 'css', 'javascript', 'js', 'dom', 'element', 'tag', 'style', 'layout', 'responsive', 'grid', 'flexbox', 'browser', 'client']: 
+            ['HTML/CSS Fundamentals', 'JavaScript Programming', 'Web APIs', 'DOM Manipulation', 'Responsive Design'],
+        
+        # Database indicators  
+        ['database', 'sql', 'table', 'query', 'select', 'insert', 'update', 'delete', 'join', 'index', 'schema', 'normal']:
+            ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization'],
+        
+        # Network indicators
+        ['network', 'tcp', 'ip', 'protocol', 'router', 'switch', 'packet', 'lan', 'wan', 'wifi', 'ethernet', 'security', 'firewall']:
+            ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting'],
+        
+        # Programming indicators
+        ['program', 'code', 'function', 'variable', 'loop', 'array', 'object', 'class', 'method', 'algorithm', 'data structure']:
+            ['JavaScript Programming', 'Programming Fundamentals', 'Object-Oriented Programming'],
+        
+        # General technical indicators
+        ['technical', 'system', 'software', 'application', 'development', 'engineering', 'computer']:
+            ['Technical Skills', 'System Analysis', 'Software Development']
+    }
+    
+    # Check content against broader patterns
+    for keywords, potential_skills in content_skill_mapping.items():
+        if any(keyword in question_text for keyword in keywords):
+            # Return the first matching skill that's actually available
+            for skill in potential_skills:
+                if skill in available_skills:
+                    return [skill]
+            # If no exact match, try partial matching
+            for skill in potential_skills:
+                for available_skill in available_skills:
+                    if any(word in available_skill.lower() for word in skill.lower().split()):
+                        return [available_skill]
+    
+    # Course-specific fallback based on available skills pattern
+    skill_priorities = {
+        # Web Development course priority
+        'web_dev': ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs'],
+        # Database course priority  
+        'database': ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization', 'Stored Procedures'],
+        # Network course priority
+        'network': ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting']
+    }
+    
+    # Detect course type from available skills and return priority skill
+    available_lower = [skill.lower() for skill in available_skills]
+    
+    if any('html' in skill or 'css' in skill or 'javascript' in skill for skill in available_lower):
+        for priority_skill in skill_priorities['web_dev']:
+            if priority_skill in available_skills:
+                return [priority_skill]
+    
+    elif any('sql' in skill or 'database' in skill for skill in available_lower):
+        for priority_skill in skill_priorities['database']:
+            if priority_skill in available_skills:
+                return [priority_skill]
+    
+    elif any('network' in skill or 'tcp' in skill for skill in available_lower):
+        for priority_skill in skill_priorities['network']:
+            if priority_skill in available_skills:
+                return [priority_skill]
+    
+    # Final fallback: return the most "fundamental" sounding skill
+    for skill in available_skills:
+        if any(word in skill.lower() for word in ['fundamental', 'basic', 'programming', 'development']):
+            return [skill]
+    
+    # Ultimate fallback: return first skill (this should never be reached due to earlier check)
+    return [available_skills[0]] if available_skills else []
+
+
 def classify_question_skills_keywords(question_text: str, available_skills: List[str]) -> List[str]:
     """Classify question skills using keyword matching."""
     question_lower = question_text.lower()
@@ -381,7 +492,14 @@ def classify_question_skills_keywords(question_text: str, available_skills: List
     
     # Return top 3 skills by score
     sorted_skills = sorted(skill_scores.items(), key=lambda x: x[1], reverse=True)
-    return [skill for skill, score in sorted_skills[:3]]
+    top_skills = [skill for skill, score in sorted_skills[:3]]
+    
+    # Ensure at least one skill is returned
+    if not top_skills and available_skills:
+        # If no keyword matches found, return the first available skill as fallback
+        top_skills = [available_skills[0]]
+    
+    return top_skills
 
 def get_skill_keywords(skill: str) -> List[str]:
     """Get related keywords for a skill."""
