@@ -115,6 +115,43 @@ async def get_skill_matrix(token: str, course_id: str) -> dict:
         logger.error(f"Get skill matrix error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
+async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
+    """Get ALL skill matrices for a course (for frontend matrix selection)."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        user_id = user_result.get('user_id')
+        user_role = user_result.get('role', 'student')
+        
+        # Verify instructor access
+        if user_role != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+        
+        # Find all matrices for this course
+        matrices_cursor = achieveup_skill_matrices_collection.find({'course_id': course_id})
+        matrices = await matrices_cursor.to_list(length=None)
+        
+        # Convert ObjectId to string for JSON serialization
+        for matrix in matrices:
+            if '_id' in matrix:
+                matrix['_id'] = str(matrix['_id'])
+        
+        return {
+            'matrices': matrices,
+            'count': len(matrices)
+        }
+        
+    except Exception as e:
+        logger.error(f"Get all skill matrices by course error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
 async def assign_skills_to_questions(token: str, course_id: str, question_skills: dict) -> dict:
     """Assign skills to quiz questions."""
     try:

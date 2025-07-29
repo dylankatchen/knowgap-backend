@@ -13,7 +13,8 @@ from services.achieveup_service import (
     export_course_data,
     import_course_data,
     analyze_questions,
-    get_question_suggestions
+    get_question_suggestions,
+    get_all_skill_matrices_by_course  # Add new import
 )
 import logging
 
@@ -145,6 +146,51 @@ async def get_skill_matrix_route(course_id):
         return jsonify(result), 200
         
     except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/matrix/course/<course_id>', methods=['GET'])
+async def get_course_skill_matrices_route(course_id):
+    """Get ALL skill matrices for a specific course. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        # ADD DETAILED LOGGING FOR DEBUGGING
+        logger.info(f"Get course matrices request: course_id={course_id}")
+        
+        # Call service to get all matrices for this course
+        result = await get_all_skill_matrices_by_course(token, course_id)
+        
+        if 'error' in result:
+            logger.error(f"Get course matrices error: {result}")
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
+        
+        # Return the matrices array (frontend expects array, not object)
+        matrices = result.get('matrices', [])
+        logger.info(f"Get course matrices success: {len(matrices)} matrices found for course {course_id}")
+        
+        return jsonify(matrices), 200
+        
+    except Exception as e:
+        logger.error(f"Get Course Matrices Route Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'error': 'Internal server error',
             'message': 'An unexpected error occurred',
