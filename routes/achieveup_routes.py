@@ -15,8 +15,10 @@ from services.achieveup_service import (
     analyze_questions,
     get_question_suggestions
 )
+import logging
 
 achieveup_bp = Blueprint('achieveup', __name__)
+logger = logging.getLogger(__name__)
 
 @achieveup_bp.route('/achieveup/matrix/create', methods=['POST'])
 async def create_skill_matrix_route():
@@ -993,7 +995,12 @@ async def achieveup_ai_analyze_questions_route():
         token = auth_header.split(' ')[1]
         data = await request.get_json()
         
+        # ADD DETAILED LOGGING FOR DEBUGGING
+        logger.info(f"AI Analysis Request Received: {data}")
+        logger.info(f"Request Headers: {dict(request.headers)}")
+        
         if not data:
+            logger.error("No request body received")
             return jsonify({
                 'error': 'Invalid request',
                 'message': 'Request body is required',
@@ -1004,10 +1011,37 @@ async def achieveup_ai_analyze_questions_route():
         quiz_id = data.get('quizId')
         questions = data.get('questions', [])
         
-        if not course_id or not quiz_id or not questions:
+        # LOG PARSED DATA
+        logger.info(f"Parsed: courseId={course_id}, quizId={quiz_id}, questions_count={len(questions)}")
+        
+        # RELAXED VALIDATION - Only questions array is truly required
+        validation_errors = []
+        
+        if not questions:
+            validation_errors.append("questions array is required")
+        elif len(questions) == 0:
+            validation_errors.append("questions array cannot be empty")
+        
+        # Make courseId and quizId optional with intelligent defaults
+        if not course_id:
+            logger.info("courseId not provided, will auto-detect from questions")
+            course_id = "unknown_course"  # Will be detected in service
+            
+        if not quiz_id:
+            logger.info("quizId not provided, using generic quiz ID")
+            quiz_id = "generic_quiz"
+        
+        if validation_errors:
+            logger.error(f"Validation failed: {validation_errors}")
             return jsonify({
-                'error': 'Missing required fields',
-                'message': 'courseId, quizId, and questions are required',
+                'error': 'Validation failed',
+                'message': '; '.join(validation_errors),
+                'received_data': {
+                    'courseId': course_id,
+                    'quizId': quiz_id,
+                    'questions_count': len(questions) if questions else 0,
+                    'questions_sample': questions[:2] if questions else []  # Show first 2 questions for debugging
+                },
                 'statusCode': 400
             }), 400
         
@@ -1016,26 +1050,23 @@ async def achieveup_ai_analyze_questions_route():
         result = await analyze_questions_with_ai(token, questions)
         
         if 'error' in result:
+            logger.error(f"AI service error: {result}")
             return jsonify({
                 'error': result['error'],
-                'message': result['error'],
-                'statusCode': result['statusCode']
-            }), result['statusCode']
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
         
-        # Format response for frontend
-        formatted_results = []
-        if 'analyses' in result:
-            for analysis in result['analyses']:
-                formatted_results.append({
-                    'questionId': analysis.get('questionId', ''),
-                    'complexity': analysis.get('complexity', 'medium'),
-                    'suggestedSkills': analysis.get('suggestedSkills', []),
-                    'confidence': analysis.get('confidence', 0.5)
-                })
+        # Return successful result
+        analyses = result.get('analyses', [])
+        logger.info(f"AI Analysis completed successfully: {len(analyses)} questions processed")
         
-        return jsonify(formatted_results), 200
+        return jsonify(analyses), 200
         
     except Exception as e:
+        logger.error(f"AI Analysis Route Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'error': 'Internal server error',
             'message': 'An unexpected error occurred',
