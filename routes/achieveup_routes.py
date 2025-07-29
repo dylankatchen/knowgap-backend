@@ -1228,40 +1228,57 @@ async def get_course_student_analytics_route(course_id):
             }), result['statusCode']
         
         # Format for frontend expectations
-        formatted_result = {
-            'students': [],
-            'skillDistribution': {},
-            'averageScores': {}
-        }
-        
-        if 'analytics' in result and 'students' in result['analytics']:
-            for student in result['analytics']['students']:
-                formatted_student = {
-                    'id': student.get('studentId', student.get('id', '')),
-                    'name': student.get('name', ''),
-                    'progress': student.get('overallProgress', 0),
-                    'skillsMastered': len([score for score in student.get('skillScores', {}).values() if score >= 80]),
-                    'badgesEarned': 0,  # Default value
-                    'riskLevel': student.get('riskLevel', 'low')
-                }
-                formatted_result['students'].append(formatted_student)
-                
-                # Add to skill distribution and averages
-                for skill, score in student.get('skillScores', {}).items():
-                    if skill not in formatted_result['skillDistribution']:
-                        formatted_result['skillDistribution'][skill] = 0
-                        formatted_result['averageScores'][skill] = []
-                    formatted_result['skillDistribution'][skill] += 1
-                    formatted_result['averageScores'][skill].append(score)
-        
-        # Calculate averages
-        for skill, scores in formatted_result['averageScores'].items():
-            if scores:
-                formatted_result['averageScores'][skill] = sum(scores) / len(scores)
-            else:
-                formatted_result['averageScores'][skill] = 0
-        
-        return jsonify(formatted_result), 200
+        if 'analytics' in result:
+            # Return the analytics data directly - it's already properly formatted
+            return jsonify(result['analytics']), 200
+        else:
+            # Fallback formatting for backward compatibility
+            formatted_result = {
+                'students': [],
+                'skillDistribution': {},
+                'averageScores': {}
+            }
+            
+            if 'analytics' in result and 'students' in result['analytics']:
+                for student in result['analytics']['students']:
+                    formatted_student = {
+                        'id': student.get('studentId', student.get('id', '')),
+                        'name': student.get('name', ''),
+                        'progress': student.get('progress', student.get('overallProgress', 0)),
+                        'skillsMastered': student.get('skillsMastered', len([score for score in student.get('skillScores', {}).values() if score >= 80])),
+                        'badgesEarned': student.get('badgesEarned', 0),
+                        'riskLevel': student.get('riskLevel', 'high'),
+                        'skillBreakdown': student.get('skillBreakdown', {})  # Include skillBreakdown!
+                    }
+                    formatted_result['students'].append(formatted_student)
+                    
+                    # Add to skill distribution and averages
+                    skill_scores = student.get('skillScores', {})
+                    if not skill_scores and 'skillBreakdown' in student:
+                        # Extract scores from skillBreakdown if skillScores not available
+                        skill_scores = {skill: data.get('score', 0) for skill, data in student['skillBreakdown'].items()}
+                    
+                    for skill, score in skill_scores.items():
+                        if skill not in formatted_result['skillDistribution']:
+                            formatted_result['skillDistribution'][skill] = 0
+                            formatted_result['averageScores'][skill] = []
+                        formatted_result['skillDistribution'][skill] += 1
+                        formatted_result['averageScores'][skill].append(score)
+                        
+                # Use data from analytics service if available
+                if 'skillDistribution' in result['analytics']:
+                    formatted_result['skillDistribution'] = result['analytics']['skillDistribution']
+                if 'averageScores' in result['analytics']:
+                    formatted_result['averageScores'] = result['analytics']['averageScores']
+            
+            # Calculate averages for any remaining skills
+            for skill, scores in formatted_result['averageScores'].items():
+                if isinstance(scores, list) and scores:
+                    formatted_result['averageScores'][skill] = round(sum(scores) / len(scores), 1)
+                elif not isinstance(scores, (int, float)):
+                    formatted_result['averageScores'][skill] = 0
+            
+            return jsonify(formatted_result), 200
         
     except Exception as e:
         return jsonify({

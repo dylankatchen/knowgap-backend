@@ -103,6 +103,35 @@ STUDENT_NAMES = [
     "Lauren White", "Connor Davis", "Megan Lee", "Ethan Brown", "Olivia Martinez"
 ]
 
+async def create_skill_matrices(skill_matrices_collection):
+    """Create skill matrices for each demo course."""
+    print("🔗 Creating skill matrices for courses...")
+    
+    matrices_created = 0
+    
+    for course_id, course_info in DEMO_COURSES.items():
+        # Check if skill matrix already exists
+        existing_matrix = await skill_matrices_collection.find_one({'course_id': course_id})
+        if existing_matrix:
+            print(f"   ✅ Skill matrix for {course_id} already exists")
+            continue
+        
+        skill_matrix_doc = {
+            'course_id': course_id,
+            'course_name': course_info['name'],
+            'course_code': course_info['code'],
+            'skills': course_info['skills'],
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        await skill_matrices_collection.insert_one(skill_matrix_doc)
+        matrices_created += 1
+        
+        print(f"   🎯 Created skill matrix for {course_id}: {len(course_info['skills'])} skills")
+    
+    print(f"✅ Created {matrices_created} skill matrices")
+
 async def create_skill_assignments(skill_assignments_collection):
     """Create skill assignments for quiz questions."""
     print("🔗 Creating skill assignments for quiz questions...")
@@ -368,6 +397,7 @@ async def main():
         db = client[DATABASE_NAME]
         
         # Collections
+        skill_matrices_collection = db["AchieveUp_Skill_Matrices"]
         skill_assignments_collection = db["AchieveUp_Question_Skills"]
         quiz_attempts_collection = db["AchieveUp_Quiz_Attempts"]
         skill_progress_collection = db["AchieveUp_Progress"]
@@ -376,6 +406,9 @@ async def main():
         print()
         
         # Create comprehensive mock data
+        await create_skill_matrices(skill_matrices_collection)
+        print()
+        
         await create_skill_assignments(skill_assignments_collection)
         print()
         
@@ -388,6 +421,7 @@ async def main():
         # Print summary
         print("🎉 Comprehensive mock data generation complete!")
         print("=" * 60)
+        print("✅ Skill matrices created (course → skills mapping)")
         print("✅ Skill assignments created (questions → skills mapping)")
         print("✅ Student quiz attempts generated with realistic responses")
         print("✅ Skill progress calculated and stored")
