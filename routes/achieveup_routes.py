@@ -931,7 +931,12 @@ async def achieveup_ai_suggest_skills_route():
         token = auth_header.split(' ')[1]
         data = await request.get_json()
         
+        # ADD DETAILED LOGGING FOR DEBUGGING
+        logger.info(f"Skill Suggestions Request Received: {data}")
+        logger.info(f"Request Headers: {dict(request.headers)}")
+        
         if not data:
+            logger.error("No request body received")
             return jsonify({
                 'error': 'Invalid request',
                 'message': 'Request body is required',
@@ -943,10 +948,31 @@ async def achieveup_ai_suggest_skills_route():
         course_code = data.get('courseCode')
         course_description = data.get('courseDescription', '')
         
-        if not course_id or not course_name or not course_code:
+        # LOG PARSED DATA
+        logger.info(f"Parsed: courseId={course_id}, courseName={course_name}, courseCode={course_code}, courseDescription={bool(course_description)}")
+        
+        # ENHANCED VALIDATION with detailed error messages
+        validation_errors = []
+        
+        if not course_id:
+            validation_errors.append("courseId is required")
+        if not course_name:
+            validation_errors.append("courseName is required")
+        if not course_code:
+            validation_errors.append("courseCode is required")
+        
+        if validation_errors:
+            logger.error(f"Skill suggestions validation failed: {validation_errors}")
             return jsonify({
-                'error': 'Missing required fields',
-                'message': 'courseId, courseName, and courseCode are required',
+                'error': 'Validation failed',
+                'message': '; '.join(validation_errors),
+                'received_data': {
+                    'courseId': course_id,
+                    'courseName': course_name,
+                    'courseCode': course_code,
+                    'courseDescription': bool(course_description),
+                    'description_length': len(course_description) if course_description else 0
+                },
                 'statusCode': 400
             }), 400
         
@@ -960,19 +986,26 @@ async def achieveup_ai_suggest_skills_route():
         })
         
         if 'error' in result:
+            logger.error(f"Skill suggestions AI service error: {result}")
             return jsonify({
                 'error': result['error'],
-                'message': result['error'],
-                'statusCode': result['statusCode']
-            }), result['statusCode']
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
         
         # Format response to match frontend expectations
         if 'skills' in result:
-            return jsonify(result['skills']), 200
+            skills = result['skills']
+            logger.info(f"Skill suggestions completed successfully: {len(skills)} skills suggested")
+            return jsonify(skills), 200
         else:
+            logger.info(f"Skill suggestions completed: {result}")
             return jsonify(result), 200
         
     except Exception as e:
+        logger.error(f"Skill Suggestions Route Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'error': 'Internal server error',
             'message': 'An unexpected error occurred',
