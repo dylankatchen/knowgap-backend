@@ -936,16 +936,62 @@ async def analyze_questions_with_ai(token: str, questions: list) -> dict:
         if 'error' in user_result:
             return user_result
         
+        # Extract course_id from the questions context if available
+        # Try to determine course from question IDs or request context
+        course_id = None
+        course_skills = []
+        
+        # Check if we can extract course from question IDs
+        for question in questions:
+            q_id = question.get('id', '')
+            if 'demo_001' in q_id:
+                course_id = 'demo_001'
+                break
+            elif 'demo_002' in q_id:
+                course_id = 'demo_002'
+                break
+            elif 'demo_003' in q_id:
+                course_id = 'demo_003'
+                break
+        
+        # Get course skills from skill matrix if we have course_id
+        if course_id:
+            skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+            course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        
+        # Fallback: Use course-specific skills based on common patterns
+        if not course_skills and course_id:
+            course_skills_map = {
+                'demo_001': ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs'],
+                'demo_002': ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization', 'Stored Procedures'],
+                'demo_003': ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting']
+            }
+            course_skills = course_skills_map.get(course_id, [])
+        
+        # If still no skills, try to infer from question content
+        if not course_skills:
+            all_text = ' '.join([q.get('text', '') + ' ' + q.get('id', '') for q in questions]).lower()
+            if any(keyword in all_text for keyword in ['javascript', 'html', 'css', 'web', 'dom']):
+                course_skills = ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs']
+            elif any(keyword in all_text for keyword in ['sql', 'database', 'table', 'query']):
+                course_skills = ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization', 'Stored Procedures']
+            elif any(keyword in all_text for keyword in ['network', 'tcp', 'ip', 'router', 'protocol']):
+                course_skills = ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting']
+            else:
+                course_skills = ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs']  # Default to web dev
+        
         # Import AI service
         from services.achieveup_ai_service import analyze_questions
         
-        # Analyze questions
-        analysis_results = await analyze_questions(questions)
+        # Analyze questions with course skills context
+        analysis_results = await analyze_questions(questions, course_skills)
         
         return {
             'totalQuestions': len(questions),
             'analyses': analysis_results,
-            'generatedAt': datetime.utcnow().isoformat()
+            'generatedAt': datetime.utcnow().isoformat(),
+            'course_id': course_id,
+            'course_skills_used': course_skills
         }
         
     except Exception as e:
