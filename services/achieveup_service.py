@@ -29,12 +29,15 @@ async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skil
         if 'error' in user_result:
             return user_result
         
-        # Check if matrix already exists for this course
-        existing_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+        # Check if matrix name already exists for this course (allow multiple matrices per course)
+        existing_matrix = await achieveup_skill_matrices_collection.find_one({
+            'course_id': course_id, 
+            'matrix_name': matrix_name
+        })
         if existing_matrix:
             return {
-                'error': 'Matrix already exists',
-                'message': 'A skill matrix already exists for this course',
+                'error': 'Matrix name already exists',
+                'message': f'A skill matrix with the name \'{matrix_name}\' already exists for this course',
                 'statusCode': 409
             }
         
@@ -134,14 +137,42 @@ async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
                 'statusCode': 403
             }
         
-        # Find all matrices for this course
-        matrices_cursor = achieveup_skill_matrices_collection.find({'course_id': course_id})
-        matrices = await matrices_cursor.to_list(length=None)
+        # ENHANCED DEBUG LOGGING FOR MATRIX RETRIEVAL
+        logger.info(f"DEBUG: Searching for matrices with course_id='{course_id}' (type: {type(course_id)})")
+        
+        # Try both string and exact matches to debug data type issues
+        query_string = {'course_id': str(course_id)}
+        query_exact = {'course_id': course_id}
+        
+        logger.info(f"DEBUG: Query 1 (string): {query_string}")
+        matrices_string = await achieveup_skill_matrices_collection.find(query_string).to_list(length=None)
+        logger.info(f"DEBUG: Found {len(matrices_string)} matrices with string course_id")
+        
+        logger.info(f"DEBUG: Query 2 (exact): {query_exact}")
+        matrices_exact = await achieveup_skill_matrices_collection.find(query_exact).to_list(length=None)
+        logger.info(f"DEBUG: Found {len(matrices_exact)} matrices with exact course_id")
+        
+        # Use string query as primary (most consistent)
+        matrices = matrices_string
+        
+        # Log what we found
+        for i, matrix in enumerate(matrices):
+            logger.info(f"DEBUG: Matrix {i+1}: name='{matrix.get('matrix_name')}', course_id='{matrix.get('course_id')}' (type: {type(matrix.get('course_id'))})")
+        
+        # If no matrices found, check what matrices exist in database
+        if len(matrices) == 0:
+            logger.warning(f"DEBUG: No matrices found for course_id='{course_id}'. Checking all matrices...")
+            all_matrices = await achieveup_skill_matrices_collection.find({}).to_list(length=None)
+            logger.info(f"DEBUG: Total matrices in database: {len(all_matrices)}")
+            for matrix in all_matrices:
+                logger.info(f"DEBUG: Existing matrix: course_id='{matrix.get('course_id')}' (type: {type(matrix.get('course_id'))}), name='{matrix.get('matrix_name')}'")
         
         # Convert ObjectId to string for JSON serialization
         for matrix in matrices:
             if '_id' in matrix:
                 matrix['_id'] = str(matrix['_id'])
+        
+        logger.info(f"DEBUG: Returning {len(matrices)} matrices for course {course_id}")
         
         return {
             'matrices': matrices,
@@ -150,6 +181,8 @@ async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
         
     except Exception as e:
         logger.error(f"Get all skill matrices by course error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def assign_skills_to_questions(token: str, course_id: str, question_skills: dict) -> dict:

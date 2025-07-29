@@ -360,7 +360,16 @@ async def get_instructor_courses(canvas_token: str) -> dict:
     try:
         # Check if this is a demo token
         if is_demo_token(canvas_token):
-            return await get_demo_instructor_courses()
+            demo_courses = await get_demo_instructor_courses()
+            # Transform demo courses to match expected format
+            courses = []
+            for course in demo_courses:
+                courses.append({
+                    'id': str(course.get('id')),
+                    'name': course.get('name', ''),
+                    'code': course.get('course_code', '')  # Map course_code to code field
+                })
+            return courses
         
         headers = {
             'Authorization': f'Bearer {canvas_token}',
