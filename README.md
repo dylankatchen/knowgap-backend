@@ -1,5 +1,5 @@
 # KnowGap - Course Video Recommendations & Student Risk Prediction
-testing discord webhook!
+
 ## Overview
 
 **KnowGap** is an intelligent platform designed to enhance student learning and course management. It combines student performance prediction with personalized video recommendations to improve understanding of incorrectly answered quiz questions. The platform integrates with learning management systems like Canvas to monitor student progress and provide instructors with critical insights, while helping students close knowledge gaps through targeted video recommendations.
