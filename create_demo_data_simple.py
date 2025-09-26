@@ -2,23 +2,27 @@
 """
 Create Demo Data (Simple Version)
 ================================
-
-This script creates comprehensive demo data for the AchieveUp system
+ *Old version of the script*
+This script creates comprehensive demo data for the KnowGap system
 without requiring environment variables to be set locally.
+*New version must have environment variables set locally everything else the same*
 
 Usage:
     python3 create_demo_data_simple.py
 """
 
 import asyncio
+import dotenv
+import os
 import uuid
 import bcrypt
 import random
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 
+
 # Production database connection
-PRODUCTION_DB_URI = "mongodb+srv://GenAIprime-backend:ptMWJleiB81OhSmb@knowgap.xumr8.mongodb.net/?retryWrites=true&w=majority&appName=KnowGap"
+PRODUCTION_DB_URI = os.getenv("PRODUCTION_DB_URI")
 DATABASE_NAME = "KnowGap"
 
 # Demo data configuration

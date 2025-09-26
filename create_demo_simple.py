@@ -2,9 +2,10 @@
 """
 Create Demo Instructor Account (Simple Version)
 =============================================
-
+ *Old version of the script*
 This script creates the demo instructor account in the production database
 without requiring environment variables to be set locally.
+*New version must have environment variables set locally everything else the same*
 
 Usage:
     python3 create_demo_simple.py
@@ -15,6 +16,10 @@ import bcrypt
 import uuid
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
+import dotenv
+import os
+
+
 
 # Demo account credentials
 DEMO_INSTRUCTOR_EMAIL = "demo.instructor@ucf.edu"
@@ -22,7 +27,7 @@ DEMO_INSTRUCTOR_PASSWORD = "AchieveUp2024!"
 DEMO_CANVAS_TOKEN = "1234567890abcdef" * 4  # 64-character demo token
 
 # Production database connection
-PRODUCTION_DB_URI = "mongodb+srv://GenAIprime-backend:ptMWJleiB81OhSmb@knowgap.xumr8.mongodb.net/?retryWrites=true&w=majority&appName=KnowGap"
+PRODUCTION_DB_URI = os.getenv("PRODUCTION_DB_URI")
 DATABASE_NAME = "KnowGap"
 
 async def create_demo_instructor():
