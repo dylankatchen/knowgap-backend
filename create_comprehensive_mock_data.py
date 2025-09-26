@@ -13,13 +13,17 @@ Usage:
 """
 
 import asyncio
+import dotenv
+import os
 import uuid
 import random
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 
+dotenv.load_dotenv()
+
 # Production database connection
-PRODUCTION_DB_URI = "mongodb+srv://GenAIprime-backend:ptMWJleiB81OhSmb@knowgap.xumr8.mongodb.net/?retryWrites=true&w=majority&appName=KnowGap"
+PRODUCTION_DB_URI = os.getenv("PRODUCTION_DB_URI")
 DATABASE_NAME = "KnowGap"
 
 # Demo courses and their skills
