@@ -3,7 +3,10 @@ from config import Config
 from utils.encryption_utils import encrypt_token, decrypt_token
 
 # Async MongoDB connection
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
 tokens_collection = db[Config.TOKENS_COLLECTION]
 

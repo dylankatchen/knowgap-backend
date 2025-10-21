@@ -649,9 +649,12 @@ async def instructor_skill_matrix_create_route():
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         data = await request.get_json()
@@ -684,9 +687,12 @@ async def instructor_course_analytics_route(course_id):
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         from services.achieveup_service import get_instructor_course_analytics
@@ -795,9 +801,12 @@ async def instructor_dashboard_route():
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         from services.achieveup_service import get_instructor_dashboard
@@ -821,9 +830,12 @@ async def instructor_students_route(course_id):
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         from services.achieveup_service import get_instructor_course_students
@@ -847,9 +859,12 @@ async def instructor_student_analytics_route(course_id):
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         from services.achieveup_service import get_instructor_student_analytics
@@ -1224,9 +1239,12 @@ async def instructor_analyze_questions_with_ai_route():
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         data = await request.get_json()
@@ -1256,9 +1274,12 @@ async def instructor_bulk_assign_skills_with_ai_route():
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         data = await request.get_json()

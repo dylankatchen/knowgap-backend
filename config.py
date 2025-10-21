@@ -19,8 +19,11 @@ class Config:
     # URLs
     YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/search"
 
-    # Database collection names
-    DATABASE = "KnowGap"
+    # Environment-based database selection
+    ENV = os.getenv("ENVIRONMENT", "development")
+    DATABASE = "KnowGap_Dev" if ENV == "development" else "KnowGap"
+
+    # Database collection names (no prefix needed - separate databases)
     TOKENS_COLLECTION = "Tokens"
     QUIZZES_COLLECTION = "Quiz Questions"
     STUDENTS_COLLECTION = "Students"
@@ -34,10 +37,18 @@ class Config:
     SKILL_PROGRESS_COLLECTION = "Skill_Progress"
     ACHIEVEUP_USERS_COLLECTION = "AchieveUp_Users"
     ACHIEVEUP_SKILL_MATRICES_COLLECTION = "AchieveUp_Skill_Matrices"
+    ACHIEVEUP_SKILL_ASSIGNMENTS_COLLECTION = "AchieveUp_Skill_Assignments"
     ACHIEVEUP_QUESTION_SKILLS_COLLECTION = "AchieveUp_Question_Skills"
     ACHIEVEUP_BADGES_COLLECTION = "AchieveUp_Badges"
+    ACHIEVEUP_USER_BADGES_COLLECTION = "AchieveUp_User_Badges"
+    ACHIEVEUP_BADGE_PROGRESS_COLLECTION = "AchieveUp_Badge_Progress"
+    ACHIEVEUP_USER_PROGRESS_COLLECTION = "AchieveUp_User_Progress"
+    ACHIEVEUP_PROGRESS_ANALYTICS_COLLECTION = "AchieveUp_Progress_Analytics"
     ACHIEVEUP_PROGRESS_COLLECTION = "AchieveUp_Progress"
     ACHIEVEUP_ANALYTICS_COLLECTION = "AchieveUp_Analytics"
+    ACHIEVEUP_COURSE_ANALYTICS_COLLECTION = "AchieveUp_Course_Analytics"
+    ACHIEVEUP_STUDENT_ANALYTICS_COLLECTION = "AchieveUp_Student_Analytics"
+    ACHIEVEUP_SKILL_ANALYTICS_COLLECTION = "AchieveUp_Skill_Analytics"
     ACHIEVEUP_CANVAS_COURSES_COLLECTION = "AchieveUp_Canvas_Courses"
     ACHIEVEUP_CANVAS_QUIZZES_COLLECTION = "AchieveUp_Canvas_Quizzes"
     ACHIEVEUP_CANVAS_QUESTIONS_COLLECTION = "AchieveUp_Canvas_Questions"

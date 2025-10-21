@@ -91,10 +91,11 @@ HEX_ENCRYPTION_KEY = Config.HEX_ENCRYPTION_KEY
 encryption_key = bytes.fromhex(HEX_ENCRYPTION_KEY)
 
 # Configure MongoDB client
+# Only bypass SSL verification in development
 client = AsyncIOMotorClient(
     Config.DB_CONNECTION_STRING,
     tls=True,
-    tlsAllowInvalidCertificates=True,
+    tlsAllowInvalidCertificates=(Config.ENV == 'development'),
     connectTimeoutMS=30000,
     serverSelectionTimeoutMS=30000
 )

@@ -11,15 +11,18 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # MongoDB setup for AchieveUp data (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
 
 # Collections
-achieveup_skill_matrices_collection = db["AchieveUp_Skill_Matrices"]
-achieveup_question_skills_collection = db["AchieveUp_Question_Skills"]
-achieveup_badges_collection = db["AchieveUp_Badges"]
-achieveup_progress_collection = db["AchieveUp_Progress"]
-achieveup_analytics_collection = db["AchieveUp_Analytics"]
+achieveup_skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
+achieveup_question_skills_collection = db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLECTION]
+achieveup_badges_collection = db[Config.ACHIEVEUP_BADGES_COLLECTION]
+achieveup_progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
+achieveup_analytics_collection = db[Config.ACHIEVEUP_ANALYTICS_COLLECTION]
 
 async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skills: list) -> dict:
     """Create skill matrix for a course."""
@@ -537,7 +540,10 @@ async def create_instructor_skill_matrix(token: str, course_id: str, matrix_name
         if 'error' in user_result:
             return user_result
         user_id = user_result['user']['id']
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
         db = client[Config.DATABASE]
         user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
@@ -568,7 +574,10 @@ async def get_instructor_course_analytics(token: str, course_id: str) -> dict:
         if 'error' in user_result:
             return user_result
         user_id = user_result['user']['id']
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
         db = client[Config.DATABASE]
         user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':

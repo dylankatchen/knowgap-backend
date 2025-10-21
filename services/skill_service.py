@@ -11,10 +11,13 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # MongoDB setup for AchieveUp skill data (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
-achieveup_skill_matrices_collection = db["AchieveUp_Skill_Matrices"]
-achieveup_skill_assignments_collection = db["AchieveUp_Skill_Assignments"]
+achieveup_skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
+achieveup_skill_assignments_collection = db[Config.ACHIEVEUP_SKILL_ASSIGNMENTS_COLLECTION]
 
 async def create_skill_matrix(token: str, data: dict) -> dict:
     """Create a new skill matrix for a course."""

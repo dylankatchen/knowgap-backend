@@ -12,11 +12,14 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # MongoDB setup for AchieveUp analytics data (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
-achieveup_course_analytics_collection = db["AchieveUp_Course_Analytics"]
-achieveup_student_analytics_collection = db["AchieveUp_Student_Analytics"]
-achieveup_skill_analytics_collection = db["AchieveUp_Skill_Analytics"]
+achieveup_course_analytics_collection = db[Config.ACHIEVEUP_COURSE_ANALYTICS_COLLECTION]
+achieveup_student_analytics_collection = db[Config.ACHIEVEUP_STUDENT_ANALYTICS_COLLECTION]
+achieveup_skill_analytics_collection = db[Config.ACHIEVEUP_SKILL_ANALYTICS_COLLECTION]
 
 async def get_course_analytics(token: str, course_id: str, time_range: str = '30d', skill_id: str = None) -> dict:
     """Get comprehensive analytics for a course."""
@@ -674,12 +677,15 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         from config import Config
         import random
         
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING, tlsAllowInvalidCertificates=True)
+        client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
         db = client[Config.DATABASE]
         
         # Use explicit collection names
-        skill_matrices_collection = db["AchieveUp_Skill_Matrices"]
-        progress_collection = db["AchieveUp_Progress"]
+        skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
+        progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
         
         # Get students for the course
         from services.achieveup_service import get_instructor_course_students

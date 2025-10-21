@@ -17,7 +17,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # MongoDB setup
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
 course_contexts_collection = db[Config.CONTEXTS_COLLECTION]
 students_collection = db[Config.STUDENTS_COLLECTION]

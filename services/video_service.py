@@ -9,7 +9,10 @@ from utils.db_utils import find_documents_by_field
 from config import Config
 
 # MongoDB async connection
-mongo_client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+mongo_client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 
 db = mongo_client[Config.DATABASE]
 students_collection = db[Config.STUDENTS_COLLECTION]

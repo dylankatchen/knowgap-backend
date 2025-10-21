@@ -12,10 +12,13 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # MongoDB setup for AchieveUp progress data (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
-achieveup_user_progress_collection = db["AchieveUp_User_Progress"]
-achieveup_progress_analytics_collection = db["AchieveUp_Progress_Analytics"]
+achieveup_user_progress_collection = db[Config.ACHIEVEUP_USER_PROGRESS_COLLECTION]
+achieveup_progress_analytics_collection = db[Config.ACHIEVEUP_PROGRESS_ANALYTICS_COLLECTION]
 
 async def get_user_progress(token: str, course_id: str = None, skill_id: str = None) -> dict:
     """Get progress for the current user."""

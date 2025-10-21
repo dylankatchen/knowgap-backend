@@ -307,9 +307,12 @@ async def instructor_web_linked_badge_route():
         user_id = user_result['user']['id']
         from motor.motor_asyncio import AsyncIOMotorClient
         from config import Config
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+            Config.DB_CONNECTION_STRING,
+            tlsAllowInvalidCertificates=(Config.ENV == 'development')
+        )
         db = client[Config.DATABASE]
-        user_doc = await db['AchieveUp_Users'].find_one({'user_id': user_id})
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({
                 'error': 'Forbidden',

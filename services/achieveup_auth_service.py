@@ -12,9 +12,12 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # MongoDB setup for AchieveUp users (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
-achieveup_users_collection = db["AchieveUp_Users"]
+achieveup_users_collection = db[Config.ACHIEVEUP_USERS_COLLECTION]
 
 # JWT configuration
 JWT_SECRET = getattr(Config, 'ACHIEVEUP_JWT_SECRET', 'achieveup-secret-key-change-in-production')
@@ -50,9 +53,12 @@ def generate_jwt_token(user_id: str) -> str:
     from config import Config
     
     async def get_user_info():
-        client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+        client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
         db = client[Config.DATABASE]
-        users_collection = db["AchieveUp_Users"]
+        users_collection = db[Config.ACHIEVEUP_USERS_COLLECTION]
         user = await users_collection.find_one({'user_id': user_id})
         return user
     
@@ -317,8 +323,10 @@ async def achieveup_update_profile(token: str, name: str, email: str, canvas_api
                     'statusCode': 400
                 }
             
-            # Store the validated token
-            update_data['canvas_api_token'] = canvas_api_token
+            # Store the validated token (encrypted)
+            from utils.encryption_utils import encrypt_token
+            encrypted_token = encrypt_token(bytes.fromhex(Config.HEX_ENCRYPTION_KEY), canvas_api_token)
+            update_data['canvas_api_token'] = encrypted_token
             update_data['canvas_token_created_at'] = datetime.utcnow()
             update_data['canvas_token_last_validated'] = datetime.utcnow()
             update_data['canvas_token_type'] = token_type
@@ -405,8 +413,8 @@ async def get_user_canvas_token(user_id: str) -> str:
     try:
         user = await achieveup_users_collection.find_one({'user_id': user_id})
         if user and user.get('canvas_api_token'):
-                    from utils.encryption_utils import decrypt_token
-        return decrypt_token(bytes.fromhex(Config.HEX_ENCRYPTION_KEY), user['canvas_api_token'])
+            from utils.encryption_utils import decrypt_token
+            return decrypt_token(bytes.fromhex(Config.HEX_ENCRYPTION_KEY), user['canvas_api_token'])
         return None
     except Exception as e:
         logger.error(f"Error getting Canvas token: {str(e)}")

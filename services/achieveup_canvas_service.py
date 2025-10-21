@@ -1,6 +1,7 @@
 # services/achieveup_canvas_service.py
 
 import aiohttp
+import ssl
 import logging
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -15,12 +16,40 @@ from config import Config
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Create SSL context based on environment
+# DEVELOPMENT: Bypass SSL verification (for local development issues)
+# PRODUCTION: Use proper SSL verification (secure)
+def get_ssl_context():
+    """Get SSL context based on environment."""
+    if Config.ENV == 'development':
+        logger.warning("⚠️  SSL certificate verification is DISABLED for development. DO NOT use in production!")
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        return ssl_context
+    else:
+        # Production: Use default SSL verification (secure)
+        logger.info("✅ SSL certificate verification is ENABLED (production mode)")
+        return True  # aiohttp uses True for default SSL verification
+
+def create_canvas_session():
+    """Create aiohttp ClientSession with appropriate SSL settings."""
+    ssl_setting = get_ssl_context()
+    if ssl_setting is True:
+        # Production: use default SSL verification
+        return aiohttp.ClientSession()
+    else:
+        # Development: use custom SSL context
+        return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
+
 # MongoDB setup for AchieveUp Canvas data (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+# Only bypass SSL verification in development
+mongo_tls_options = {'tlsAllowInvalidCertificates': True} if Config.ENV == 'development' else {}
+client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING, **mongo_tls_options)
 db = client[Config.DATABASE]
-achieveup_canvas_courses_collection = db["AchieveUp_Canvas_Courses"]
-achieveup_canvas_quizzes_collection = db["AchieveUp_Canvas_Quizzes"]
-achieveup_canvas_questions_collection = db["AchieveUp_Canvas_Questions"]
+achieveup_canvas_courses_collection = db[Config.ACHIEVEUP_CANVAS_COURSES_COLLECTION]
+achieveup_canvas_quizzes_collection = db[Config.ACHIEVEUP_CANVAS_QUIZZES_COLLECTION]
+achieveup_canvas_questions_collection = db[Config.ACHIEVEUP_CANVAS_QUESTIONS_COLLECTION]
 
 # Canvas API configuration
 CANVAS_API_URL = getattr(Config, 'CANVAS_API_URL', 'https://webcourses.ucf.edu/api/v1')
@@ -39,7 +68,7 @@ async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'stu
         
         # Test token by calling Canvas API /users/self endpoint
         url = f"{CANVAS_API_URL}/users/self"
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     if response.status == 401:
@@ -57,26 +86,31 @@ async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'stu
         # If instructor, check /courses endpoint for instructor permissions
         permissions = {}
         if canvas_token_type == 'instructor':
+            # Request courses with enrollment information included
             courses_url = f"{CANVAS_API_URL}/courses"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(courses_url, headers=headers) as courses_response:
+            params = {
+                'enrollment_type': 'teacher',  # Only get courses where user is a teacher
+                'per_page': 100,
+                'include[]': 'total_students'
+            }
+            async with create_canvas_session() as session:
+                async with session.get(courses_url, headers=headers, params=params) as courses_response:
                     if courses_response.status != 200:
+                        error_text = await courses_response.text()
+                        logger.error(f"Canvas instructor validation error: {courses_response.status} - {error_text}")
                         return {
                             'valid': False,
                             'message': 'Token does not have instructor permissions. Please provide an instructor token.'
                         }
                     courses_data = await courses_response.json()
-                    # Check if any course has "enrollment_type" as "teacher" or "instructor"
-                    is_instructor = any(
-                        any(enr.get('type') in ['TeacherEnrollment', 'instructor'] for enr in course.get('enrollments', []))
-                        for course in courses_data if 'enrollments' in course
-                    )
-                    if not is_instructor:
+                    # If we get any courses with enrollment_type=teacher, user is an instructor
+                    if not courses_data or len(courses_data) == 0:
                         return {
                             'valid': False,
                             'message': 'Token is valid but does not have instructor access to any courses.'
                         }
                     permissions['instructor'] = True
+                    logger.info(f"User has instructor access to {len(courses_data)} course(s)")
         return {
             'valid': True,
             'message': 'Token is valid',
@@ -130,7 +164,7 @@ async def get_canvas_courses(token: str) -> dict:
             'per_page': 100
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     courses_data = await response.json()
@@ -196,7 +230,7 @@ async def get_canvas_course_quizzes(token: str, course_id: str) -> dict:
             'per_page': 100
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     quizzes_data = await response.json()
@@ -262,7 +296,7 @@ async def get_canvas_quiz_questions(token: str, quiz_id: str) -> dict:
             'per_page': 100
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     questions_data = await response.json()
@@ -377,7 +411,7 @@ async def get_instructor_courses(canvas_token: str) -> dict:
         }
         url = f"{CANVAS_API_URL}/courses"
         params = {'enrollment_type': 'teacher', 'per_page': 100}
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     courses_data = await response.json()
@@ -411,7 +445,7 @@ async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> di
         }
         url = f"{CANVAS_API_URL}/courses/{course_id}/quizzes"
         params = {'per_page': 100}
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     quizzes_data = await response.json()
@@ -445,7 +479,7 @@ async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict
         }
         url = f"{CANVAS_API_URL}/quizzes/{quiz_id}/questions"
         params = {'per_page': 100}
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     questions_data = await response.json()
@@ -484,7 +518,7 @@ async def get_course_students(canvas_token: str, course_id: str) -> dict:
             'include[]': 'user'
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     enrollments_data = await response.json()
@@ -527,7 +561,7 @@ async def get_course_detailed_info(canvas_token: str, course_id: str) -> dict:
             'include[]': ['syllabus_body', 'public_description', 'course_image']
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     course_data = await response.json()
@@ -568,7 +602,7 @@ async def get_quiz_detailed_questions(canvas_token: str, quiz_id: str) -> dict:
         url = f"{CANVAS_API_URL}/quizzes/{quiz_id}/questions"
         params = {'per_page': 100}
         
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
                 if response.status == 200:
                     questions_data = await response.json()

@@ -11,11 +11,14 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # MongoDB setup for AchieveUp badge data (separate from KnowGap)
-client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
+client = AsyncIOMotorClient(
+        Config.DB_CONNECTION_STRING,
+        tlsAllowInvalidCertificates=(Config.ENV == 'development')
+    )
 db = client[Config.DATABASE]
-achieveup_badges_collection = db["AchieveUp_Badges"]
-achieveup_user_badges_collection = db["AchieveUp_User_Badges"]
-achieveup_badge_progress_collection = db["AchieveUp_Badge_Progress"]
+achieveup_badges_collection = db[Config.ACHIEVEUP_BADGES_COLLECTION]
+achieveup_user_badges_collection = db[Config.ACHIEVEUP_USER_BADGES_COLLECTION]
+achieveup_badge_progress_collection = db[Config.ACHIEVEUP_BADGE_PROGRESS_COLLECTION]
 
 async def generate_badges_for_user(token: str, data: dict) -> dict:
     """Generate badges for a user based on their progress."""
