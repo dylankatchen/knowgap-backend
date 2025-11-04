@@ -22,11 +22,17 @@ logger = logging.getLogger(__name__)
 def get_ssl_context():
     """Get SSL context based on environment."""
     if Config.ENV == 'development':
-        logger.warning("⚠️  SSL certificate verification is DISABLED for development. DO NOT use in production!")
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        return ssl_context
+        try:
+            # Try to use certifi certificates first for security
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            return ssl_context
+        except Exception as e:
+            # Fallback to disabled verification only if certifi fails
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            return ssl_context
     else:
         # Production: Use default SSL verification (secure)
         logger.info("✅ SSL certificate verification is ENABLED (production mode)")

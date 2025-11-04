@@ -7,6 +7,8 @@ import aiohttp
 import asyncio
 import html
 import logging
+import ssl
+
 
 def clean_metadata_text(text: str) -> str:
     """
@@ -81,6 +83,27 @@ def extract_video_id(youtube_url):
     return video_id
 
 
+def get_ssl_context():
+    """Return SSL context that works in development and production."""
+    if Config.ENV == 'development':
+        try:
+            import certifi
+            return ssl.create_default_context(cafile=certifi.where())
+        except Exception as exc:
+            logging.warning("Certifi unavailable, disabling SSL verification: %s", exc)
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            return ssl_context
+    return True
+
+def create_http_session():
+    ssl_setting = get_ssl_context()
+    if ssl_setting is True:
+        return aiohttp.ClientSession()
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
+
+
 async def get_video_metadata(youtube_url):
     """Retrieves metadata for a YouTube video by URL asynchronously."""
     video_id = extract_video_id(youtube_url)
@@ -90,7 +113,7 @@ async def get_video_metadata(youtube_url):
     # YouTube API URL for getting video details
     api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet&id={video_id}&key={Config.YOUTUBE_API_KEY}"
 
-    async with aiohttp.ClientSession() as session:
+    async with create_http_session() as session:
         async with session.get(api_url) as response:
             if response.status == 200:
                 response_data = await response.json()

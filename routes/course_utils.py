@@ -1,16 +1,46 @@
 # Import necessary libraries
 import asyncio
 import aiohttp
+import ssl
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from config import Config
+
+# Create SSL context based on environment
+def get_ssl_context():
+    """Get SSL context based on environment."""
+    if Config.ENV == 'development':
+        try:
+            # Try to use certifi certificates first for security
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            return ssl_context
+        except Exception as e:
+            # Fallback to disabled verification only if certifi fails
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            return ssl_context
+    else:
+        # Production: Use default SSL verification (secure)
+        return True  # aiohttp uses True for default SSL verification
+
+def create_canvas_session():
+    """Create aiohttp ClientSession with appropriate SSL settings."""
+    ssl_setting = get_ssl_context()
+    if ssl_setting is True:
+        # Production: use default SSL verification
+        return aiohttp.ClientSession()
+    else:
+        # Development: use custom SSL context
+        return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
 
 async def get_course_name(courseid, link, access_token):
     api_url = f'https://{link}/api/v1/courses/{courseid}'
     headers = {'Authorization': f'Bearer {access_token}'}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(api_url, headers=headers) as response:
                 if response.status == 200:
                     course_details = await response.json()
@@ -68,7 +98,7 @@ async def get_quizzes(courseid, link, access_token, max_quizzes=10):
     }
     
     try:
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(api_url, headers=headers) as response:
                 if response.status == 200:
                     unfiltered_data = await response.json()
@@ -110,7 +140,7 @@ async def get_question_data(courseid, quiz_id, link, access_token):
     headers = {'Authorization': f'Bearer {access_token}'}
     
     try:
-        async with aiohttp.ClientSession() as session:
+        async with create_canvas_session() as session:
             async with session.get(api_url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
