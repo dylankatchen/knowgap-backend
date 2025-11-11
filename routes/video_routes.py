@@ -151,3 +151,35 @@ def init_video_routes(app):
             return jsonify({'success': True}), 200
         else:
             return jsonify({'error': result.get('error', 'Unknown error')}), 400
+        
+    @app.route('/vote-video', methods=['POST'])
+    async def vote_video_route():
+        try:
+            data = await request.get_json()
+            if not data:
+                return jsonify({"error": "No JSON body provided"}), 400
+
+            required = ["student_id", "course_id", "question_id", "video_link", "vote"]
+            missing = [k for k in required if k not in data]
+            if missing:
+                return jsonify({"error": f"Missing required parameters: {', '.join(missing)}"}), 400
+            
+            from services.video_service import vote_video
+            result = await vote_video(
+                data["student_id"],
+                data["course_id"],
+                data["question_id"],
+                data["video_link"],
+                data["vote"]
+            )
+
+            if result.get("success"):
+                #message on success
+                return jsonify({"message": result.get("message", "Vote recorded successfully.")}), 200
+            
+            #message on failure
+            return jsonify({"error": result.get("error", "Unknown error")}), 400
+        
+        except Exception as e:
+            return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
