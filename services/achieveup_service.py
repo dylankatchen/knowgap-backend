@@ -886,6 +886,7 @@ async def get_instructor_dashboard(token: str) -> dict:
         # Get instructor's Canvas courses
         from services.achieveup_canvas_service import get_instructor_courses
         from services.achieveup_auth_service import get_user_canvas_token
+        from services.achieveup_canvas_service import get_course_students
         
         canvas_token = await get_user_canvas_token(user_id)
         if not canvas_token:
@@ -898,8 +899,16 @@ async def get_instructor_dashboard(token: str) -> dict:
         courses_result = await get_instructor_courses(canvas_token)
         if 'error' in courses_result:
             return courses_result
+
+        for course in courses_result:
+            course_id = course['id']
+            students_result = await get_course_students(canvas_token, course_id)
+            if 'error' in students_result:
+                return students_result
         
         courses = courses_result if isinstance(courses_result, list) else []
+
+        students = students_result if isinstance(students_result, list) else []
         
         # Get skill matrices count
         matrices_count = await achieveup_skill_matrices_collection.count_documents({})
@@ -909,6 +918,7 @@ async def get_instructor_dashboard(token: str) -> dict:
         
         dashboard_data = {
             'courses': courses,
+            'students': len(students),
             'totalCourses': len(courses),
             'totalSkillMatrices': matrices_count,
             'recentMatrices': recent_matrices,
