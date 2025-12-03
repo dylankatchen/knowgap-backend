@@ -4,7 +4,8 @@ from services.achieveup_canvas_service import (
     get_canvas_course_quizzes,
     get_canvas_quiz_questions
 )
-
+import logging
+logger = logging.getLogger(__name__)
 canvas_bp = Blueprint('canvas', __name__)
 
 @canvas_bp.route('/canvas/courses', methods=['GET'])
@@ -239,6 +240,9 @@ async def instructor_course_quizzes_route(course_id):
 async def instructor_quiz_questions_route(quiz_id):
     """Get all questions in a quiz (instructor token required)."""
     try:
+        #debugging 
+        logger.info(f"star route called: /canvas/instructor/quizzes/{quiz_id}/questions")
+
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
@@ -258,11 +262,19 @@ async def instructor_quiz_questions_route(quiz_id):
         user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
+        
+        course_id = request.args.get('course_id')
+
+        #debugging
+        logger.info(f"star course_id from query params: {course_id}")
+        if not course_id:
+            return jsonify({'error': 'Missing Course_id', 'message': 'course_id query paramenter required', 'statusCode': 400}), 400
+
         canvas_token = await get_user_canvas_token(user_id)
         if not canvas_token:
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_quiz_questions
-        result = await get_instructor_quiz_questions(canvas_token, quiz_id)
+        result = await get_instructor_quiz_questions(canvas_token, quiz_id, course_id)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500 

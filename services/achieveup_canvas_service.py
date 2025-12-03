@@ -471,9 +471,12 @@ async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> di
         logger.error(f"Get instructor course quizzes error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
-async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict:
+async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str, course_id: str) -> dict:
     """Get all questions in a quiz for instructor."""
     try:
+
+        #for deubuggin
+        logger.info(f"Getting questions for quiz_id = {quiz_id}, course_id={course_id}")
         # Check if this is a demo token
         from services.achieveup_canvas_demo_service import is_demo_token, get_demo_quiz_questions
         if is_demo_token(canvas_token):
@@ -483,7 +486,9 @@ async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
         }
-        url = f"{CANVAS_API_URL}/quizzes/{quiz_id}/questions"
+        url = f"{CANVAS_API_URL}/courses/{course_id}/quizzes/{quiz_id}/questions"
+        #debugging
+        logger.info(f"Canvas API URL:{url}")
         params = {'per_page': 100}
         async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
