@@ -6,6 +6,8 @@ from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from services.achieveup_auth_service import achieveup_verify_token
 from config import Config
+from openai import AsyncOpenAI
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -30,7 +32,8 @@ async def create_skill_matrix(token: str, data: dict) -> dict:
         user_id = user_result.get('user_id')
         course_id = data.get('course_id')
         matrix_name = data.get('name')
-        skills = data.get('skills', [])
+        #delete following line to allow new code to tototally have an ai made skills matrix
+        #skills = data.get('skills', [])
         
         if not course_id or not matrix_name:
             return {
@@ -39,7 +42,37 @@ async def create_skill_matrix(token: str, data: dict) -> dict:
                 'statusCode': 400
             }
         
+        #-AI MAKING SKILLS LIST HERE(- means its comment:the commented lines without dash is code[i did not want to uncomment it yet until the api for ai works]
+        #-creating a client
+        client = AsyncOpenAI(api_key=Config.OPENAI_KEY)
+
+        #-creating a prompt so it can be better organized, and have more control
+        #-NOTE: it might be better to make a google api call and get the name of the class though google, but may not be necesary if the LLM spits bck what we need.
+        prompt = f"""
+            Generate a comprehensive skill matrix for {course_id} 
+            Create 5-10 key skills students should master. 
+            Return ONLY a perfect raw JSON array with this exact format: 
+            [{{"id": "skill_1", "name": "Skill Name"}}, ...]
+        """
+
+        #-sending the prompt to chatgpt
+        response = await client.chat.completions.create(
+            model="gpt-5-nano",
+            messages=[
+                {"role": "system","content": "Return only valid JSON"},
+                {"role": "user", "content":prompt}
+            ]
+        )
+        
+        #-creating variable to save ai response(GETTING FIRST RESPONSE FROM AI)
+        ai_response = response.choices[0].message.content
+        
+        #-we use json becaause the response is in json format
+        import json
+        skills = json.loads(ai_response)
+
         # Create skill matrix document
+
         matrix_id = str(uuid.uuid4())
         matrix_doc = {
             'matrix_id': matrix_id,
@@ -275,6 +308,7 @@ async def assign_skill_to_question(token: str, data: dict) -> dict:
 
 async def get_skill_suggestions(token: str, data: dict) -> dict:
     """Get AI-powered skill suggestions for a question."""
+    #creating the client
     try:
         # Verify token
         user_result = await achieveup_verify_token(token)
