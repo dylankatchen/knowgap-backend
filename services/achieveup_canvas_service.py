@@ -63,8 +63,8 @@ CANVAS_API_URL = getattr(Config, 'CANVAS_API_URL', 'https://webcourses.ucf.edu/a
 async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'student') -> dict:
     """Validate Canvas API token by testing it with Canvas API. Supports student and instructor tokens."""
     try:
-        # Check if this is a demo token
-        if is_demo_token(canvas_token):
+        # Check if this is a demo token (only if demo mode is enabled)
+        if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):
             return await validate_demo_canvas_token(canvas_token, canvas_token_type)
         
         headers = {
@@ -399,7 +399,7 @@ async def get_instructor_courses(canvas_token: str) -> dict:
     """Get all courses taught by the instructor using their Canvas token."""
     try:
         # Check if this is a demo token
-        if is_demo_token(canvas_token):
+        if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):
             demo_courses = await get_demo_instructor_courses()
             # Transform demo courses to match expected format
             courses = []
@@ -442,7 +442,7 @@ async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> di
     try:
         # Check if this is a demo token
         from services.achieveup_canvas_demo_service import is_demo_token, get_demo_course_quizzes
-        if is_demo_token(canvas_token):
+        if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):
             return await get_demo_course_quizzes(course_id)
         
         headers = {
@@ -471,19 +471,19 @@ async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> di
         logger.error(f"Get instructor course quizzes error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
-async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict:
+async def get_instructor_quiz_questions(canvas_token: str, course_id: str, quiz_id: str) -> dict:
     """Get all questions in a quiz for instructor."""
     try:
         # Check if this is a demo token
         from services.achieveup_canvas_demo_service import is_demo_token, get_demo_quiz_questions
-        if is_demo_token(canvas_token):
+        if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):
             return await get_demo_quiz_questions(quiz_id)
         
         headers = {
             'Authorization': f'Bearer {canvas_token}',
             'Content-Type': 'application/json'
         }
-        url = f"{CANVAS_API_URL}/quizzes/{quiz_id}/questions"
+        url = f"{CANVAS_API_URL}/courses/{course_id}/quizzes/{quiz_id}/questions"
         params = {'per_page': 100}
         async with create_canvas_session() as session:
             async with session.get(url, headers=headers, params=params) as response:
@@ -500,7 +500,7 @@ async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str) -> dict
                 else:
                     error_text = await response.text()
                     logger.error(f"Canvas instructor quiz questions error: {response.status} - {error_text}")
-                    return {'error': f'Failed to fetch instructor quiz questions: {response.status}', 'statusCode': response.status}
+                    return {'error': f'Failed to fetch instructor quiz questions: {response}', 'statusCode': response.status}
     except Exception as e:
         logger.error(f"Get instructor quiz questions error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
@@ -509,7 +509,7 @@ async def get_course_students(canvas_token: str, course_id: str) -> dict:
     """Get students enrolled in a course."""
     try:
         # Check if this is a demo token
-        if is_demo_token(canvas_token):
+        if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):
             return await get_demo_course_students(course_id)
         
         headers = {
@@ -597,7 +597,7 @@ async def get_course_detailed_info(canvas_token: str, course_id: str) -> dict:
         logger.error(f"Get course detailed info error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
-async def get_quiz_detailed_questions(canvas_token: str, quiz_id: str) -> dict:
+async def get_quiz_detailed_questions(canvas_token: str, course_id: str, quiz_id: str) -> dict:
     """Get detailed questions for a quiz including all metadata."""
     try:
         headers = {
@@ -605,7 +605,7 @@ async def get_quiz_detailed_questions(canvas_token: str, quiz_id: str) -> dict:
             'Content-Type': 'application/json'
         }
         
-        url = f"{CANVAS_API_URL}/quizzes/{quiz_id}/questions"
+        url = f"{CANVAS_API_URL}/courses/{course_id}/quizzes/{quiz_id}/questions"
         params = {'per_page': 100}
         
         async with create_canvas_session() as session:

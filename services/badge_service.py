@@ -287,21 +287,93 @@ async def get_badge_progress(token: str, skill_id: str, course_id: str) -> dict:
 
 # Helper functions
 async def get_user_skill_progress(user_id: str, course_id: str) -> list:
-    """Get user's skill progress for a course."""
-    # This would integrate with the skill assignment and quiz data
-    # For now, return mock data
-    return [
-        {
-            'skill_id': 'skill_1',
-            'skill_name': 'Problem Solving',
-            'progress_percentage': 85
-        },
-        {
-            'skill_id': 'skill_2',
-            'skill_name': 'Critical Thinking',
-            'progress_percentage': 72
-        }
-    ]
+    """
+    Get user's skill progress for a course based on real quiz submissions.
+    
+    Calculates progress by:
+    1. Fetching all quiz submissions for the student
+    2. Getting skill assignments for each question
+    3. Calculating percentage of correct answers per skill
+    
+    Args:
+        user_id: Student's Canvas user ID
+        course_id: Canvas course ID
+        
+    Returns:
+        list: Skill progress data with percentages
+    """
+    try:
+        from services.canvas_submissions_service import get_cached_submission
+        
+        # Get all skill assignments for this course
+        skill_assignments = {}
+        async for assignment in db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLECTION].find({'course_id': course_id}):
+            question_id = assignment.get('question_id')
+            skills = assignment.get('skills', [])
+            skill_assignments[question_id] = skills
+        
+        # If no skill assignments exist, return empty list
+        if not skill_assignments:
+            logger.warning(f"No skill assignments found for course {course_id}")
+            return []
+        
+        # Get all quiz submissions for this student in the course
+        submissions_cursor = db.get_collection('AchieveUp_Quiz_Submissions').find({
+            'student_id': user_id,
+            'course_id': course_id
+        })
+        
+        # Track skill performance
+        skill_stats = {}  # {skill_name: {'correct': int, 'total': int}}
+        
+        async for submission in submissions_cursor:
+            questions = submission.get('questions', [])
+            
+            for question in questions:
+                question_id = question.get('question_id')
+                correct = question.get('correct', False)
+                
+                # Get assigned skills for this question
+                assigned_skills = skill_assignments.get(question_id, [])
+                
+                for skill in assigned_skills:
+                    skill_name = skill.get('name') if isinstance(skill, dict) else skill
+                    
+                    if skill_name not in skill_stats:
+                        skill_stats[skill_name] = {'correct': 0, 'total': 0}
+                    
+                    skill_stats[skill_name]['total'] += 1
+                    if correct:
+                        skill_stats[skill_name]['correct'] += 1
+        
+        # Calculate progress percentages
+        progress_data = []
+        for skill_name, stats in skill_stats.items():
+            total = stats['total']
+            correct = stats['correct']
+            
+            if total > 0:
+                progress_percentage = (correct / total) * 100
+            else:
+                progress_percentage = 0
+            
+            progress_data.append({
+                'skill_id': skill_name.lower().replace(' ', '_'),
+                'skill_name': skill_name,
+                'progress_percentage': round(progress_percentage, 2),
+                'questions_attempted': total,
+                'questions_correct': correct
+            })
+        
+        # Sort by skill name for consistency
+        progress_data.sort(key=lambda x: x['skill_name'])
+        
+        return progress_data
+        
+    except Exception as e:
+        logger.error(f"Get user skill progress error: {str(e)}")
+        # Return empty list on error rather than failing completely
+        return []
 
 def get_badge_criteria(badge_level: str) -> int:
     """Get the criteria percentage for a badge level."""
@@ -355,4 +427,66 @@ def get_badge_threshold(badge_level: str) -> int:
         'advanced': 75,
         'expert': 90
     }
-    return threshold_map.get(badge_level, 0) 
+    return threshold_map.get(badge_level, 0)
+
+async def get_student_earned_badges(token: str, student_id: str) -> dict:
+    """Get all earned badges for a specific student with course information."""
+    try:
+        # Verify token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        # Get all badges for the student (only earned ones with progress >= 80)
+        badges = []
+        async for badge_doc in achieveup_user_badges_collection.find({'user_id': student_id}):
+            # Only include badges that are actually earned (80% or higher)
+            if badge_doc.get('progress_percentage', 0) >= 80:
+                badge_doc.pop('_id', None)
+                badges.append(badge_doc)
+        
+        # Get course names from Canvas API
+        from services.achieveup_canvas_service import get_instructor_courses
+        
+        # Get the canvas token from the user document
+        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_result.get('user_id')})
+        canvas_token = user_doc.get('canvas_token') if user_doc else None
+        
+        # Create a map of course_id to course_name
+        course_map = {}
+        if canvas_token:
+            try:
+                courses_result = await get_instructor_courses(canvas_token)
+                if 'courses' in courses_result:
+                    for course in courses_result['courses']:
+                        course_map[str(course.get('id'))] = course.get('name', 'Unknown Course')
+            except Exception as e:
+                logger.error(f"Error fetching courses: {str(e)}")
+        
+        # Enrich badges with course names
+        enriched_badges = []
+        for badge in badges:
+            enriched_badge = {
+                'badge_id': badge.get('badge_id'),
+                'badge_name': badge.get('badge_name'),
+                'skill_name': badge.get('skill_name'),
+                'badge_level': badge.get('badge_level'),
+                'progress_percentage': badge.get('progress_percentage'),
+                'earned_at': badge.get('earned_at'),
+                'course_id': badge.get('course_id'),
+                'course_name': course_map.get(str(badge.get('course_id')), 'Unknown Course')
+            }
+            enriched_badges.append(enriched_badge)
+        
+        # Sort by earned date (newest first)
+        enriched_badges.sort(key=lambda x: x.get('earned_at', datetime.min), reverse=True)
+        
+        return {
+            'student_id': student_id,
+            'total_badges': len(enriched_badges),
+            'badges': enriched_badges
+        }
+        
+    except Exception as e:
+        logger.error(f"Get student earned badges error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500} 

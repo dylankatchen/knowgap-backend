@@ -241,8 +241,8 @@ async def instructor_course_quizzes_route(course_id):
             'statusCode': 500
         }), 500
 
-@instructor_bp.route('/instructor/quizzes/<quiz_id>/questions', methods=['GET'])
-async def instructor_quiz_questions_route(quiz_id):
+@instructor_bp.route('/instructor/courses/<course_id>/quizzes/<quiz_id>/questions', methods=['GET'])
+async def instructor_quiz_questions_route(course_id, quiz_id):
     """Get all questions in a quiz for instructor."""
     try:
         auth_header = request.headers.get('Authorization')
@@ -275,7 +275,7 @@ async def instructor_quiz_questions_route(quiz_id):
                 'statusCode': 400
             }), 400
         
-        result = await get_quiz_detailed_questions(canvas_token, quiz_id)
+        result = await get_quiz_detailed_questions(canvas_token, course_id, quiz_id)
         
         if 'error' in result:
             return jsonify({

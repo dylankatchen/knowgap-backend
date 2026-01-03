@@ -52,10 +52,19 @@ class Config:
     ACHIEVEUP_CANVAS_COURSES_COLLECTION = "AchieveUp_Canvas_Courses"
     ACHIEVEUP_CANVAS_QUIZZES_COLLECTION = "AchieveUp_Canvas_Quizzes"
     ACHIEVEUP_CANVAS_QUESTIONS_COLLECTION = "AchieveUp_Canvas_Questions"
+    ACHIEVEUP_QUIZ_SUBMISSIONS_COLLECTION = "AchieveUp_Quiz_Submissions"
     
     # AchieveUp configuration
     ACHIEVEUP_JWT_SECRET = os.getenv("ACHIEVEUP_JWT_SECRET", "achieveup-secret-key-change-in-production")
     CANVAS_API_URL = os.getenv("CANVAS_API_URL", "https://webcourses.ucf.edu/api/v1")
+    
+    # Canvas API Configuration
+    CANVAS_API_RATE_LIMIT = int(os.getenv("CANVAS_API_RATE_LIMIT", "100"))  # requests per minute
+    SUBMISSION_CACHE_TTL = int(os.getenv("SUBMISSION_CACHE_TTL", "3600"))  # 1 hour in seconds
+    
+    # Feature Flags
+    ENABLE_DEMO_MODE = os.getenv("ENABLE_DEMO_MODE", "true").lower() == "true"  # Default to true for backward compatibility
+    ENABLE_SUBMISSION_CACHE = os.getenv("ENABLE_SUBMISSION_CACHE", "false").lower() == "true"  # Default to false to minimize storage
 
     @classmethod
     def check_config(cls):

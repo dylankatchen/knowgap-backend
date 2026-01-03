@@ -235,8 +235,8 @@ async def instructor_course_quizzes_route(course_id):
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
 
-@canvas_bp.route('/canvas/instructor/quizzes/<quiz_id>/questions', methods=['GET'])
-async def instructor_quiz_questions_route(quiz_id):
+@canvas_bp.route('/canvas/instructor/courses/<course_id>/quizzes/<quiz_id>/questions', methods=['GET'])
+async def instructor_quiz_questions_route(course_id, quiz_id):
     """Get all questions in a quiz (instructor token required)."""
     try:
         auth_header = request.headers.get('Authorization')
@@ -262,7 +262,7 @@ async def instructor_quiz_questions_route(quiz_id):
         if not canvas_token:
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_quiz_questions
-        result = await get_instructor_quiz_questions(canvas_token, quiz_id)
+        result = await get_instructor_quiz_questions(canvas_token, course_id, quiz_id)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500 

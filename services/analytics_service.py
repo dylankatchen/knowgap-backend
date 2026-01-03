@@ -699,8 +699,8 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         skill_matrix = await skill_matrices_collection.find_one({'course_id': course_id})
         course_skills = skill_matrix.get('skills', []) if skill_matrix else []
         
-        # Fallback: Define skills for each course if not found in database
-        if not course_skills:
+        # Fallback: Define skills for each course if not found in database (only if demo mode enabled)
+        if not course_skills and Config.ENABLE_DEMO_MODE:
             course_skills_map = {
                 "demo_001": ["HTML/CSS Fundamentals", "JavaScript Programming", "DOM Manipulation", "Responsive Design", "Web APIs"],
                 "demo_002": ["SQL Fundamentals", "Database Design", "Data Normalization", "Query Optimization", "Stored Procedures"],
@@ -714,6 +714,7 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         
         for i, student in enumerate(students):
             student_id = student.get('id')
+            print(student, 'student')
             
             # Get all progress data for this student
             progress_data = await progress_collection.find({
@@ -721,8 +722,12 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                 'course_id': course_id
             }).to_list(length=None)
             
-            # If no progress data found, generate realistic demo data
-            if not progress_data or len(progress_data) == 0:
+            # If no progress data found, generate realistic demo data (only if demo mode enabled)
+            if (not progress_data or len(progress_data) == 0) and Config.ENABLE_DEMO_MODE:
+                # Use student ID as seed for consistent random data
+                seed_value = hash(student_id) % (2**32)
+                rng = random.Random(seed_value)
+                
                 # Generate realistic skill scores (varied by student)
                 base_performance = 0.4 + (i * 0.02)  # Varied student ability
                 skill_breakdown = {}
@@ -730,8 +735,8 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                 skills_mastered = 0
                 
                 for skill in course_skills:
-                    # Generate realistic score with some variation
-                    score = base_performance * 100 + random.uniform(-20, 30)
+                    # Generate realistic score with some variation (using seeded random)
+                    score = base_performance * 100 + rng.uniform(-20, 30)
                     score = max(15, min(100, score))  # Clamp between 15-100
                     
                     # Determine level
@@ -743,9 +748,9 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                     else:
                         level = "beginner"
                     
-                    # Generate realistic question counts
-                    questions_attempted = random.randint(2, 8)
-                    questions_correct = max(0, int(questions_attempted * (score / 100) + random.uniform(-1, 1)))
+                    # Generate realistic question counts (using seeded random)
+                    questions_attempted = rng.randint(2, 8)
+                    questions_correct = max(0, int(questions_attempted * (score / 100) + rng.uniform(-1, 1)))
                     questions_correct = min(questions_attempted, questions_correct)
                     
                     skill_breakdown[skill] = {

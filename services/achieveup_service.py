@@ -670,34 +670,33 @@ async def get_question_suggestions(token: str, question_id: str) -> dict:
         if 'error' in user_result:
             return user_result
         
-        # Get question data from demo service
-        from services.achieveup_canvas_demo_service import get_demo_quiz_questions
-        
-        # Extract quiz_id from question_id (questions are typically named like quiz_demo_001_1_q1)
-        # Try to find the question in demo data
+        # Get question data from demo service (only if demo mode is enabled)
         question_data = None
         course_id = None
         
-        # Check all demo quizzes for this question
-        demo_quizzes = {
-            "quiz_demo_001_1": "demo_001",
-            "quiz_demo_001_2": "demo_001", 
-            "quiz_demo_002_1": "demo_002",
-            "quiz_demo_003_1": "demo_003"
-        }
-        
-        for quiz_id, cid in demo_quizzes.items():
-            quiz_questions = await get_demo_quiz_questions(quiz_id)
-            for q in quiz_questions:
-                if q.get('id') == question_id or question_id in q.get('id', ''):
-                    question_data = q
-                    course_id = cid
+        if Config.ENABLE_DEMO_MODE:
+            from services.achieveup_canvas_demo_service import get_demo_quiz_questions
+            
+            # Check all demo quizzes for this question
+            demo_quizzes = {
+                "quiz_demo_001_1": "demo_001",
+                "quiz_demo_001_2": "demo_001", 
+                "quiz_demo_002_1": "demo_002",
+                "quiz_demo_003_1": "demo_003"
+            }
+            
+            for quiz_id, cid in demo_quizzes.items():
+                quiz_questions = await get_demo_quiz_questions(quiz_id)
+                for q in quiz_questions:
+                    if q.get('id') == question_id or question_id in q.get('id', ''):
+                        question_data = q
+                        course_id = cid
+                        break
+                if question_data:
                     break
-            if question_data:
-                break
         
         # If no specific question found, use question_id to determine context
-        if not question_data:
+        if not question_data and Config.ENABLE_DEMO_MODE:
             if 'demo_001' in question_id or 'web' in question_id.lower():
                 course_id = 'demo_001'
             elif 'demo_002' in question_id or 'database' in question_id.lower() or 'sql' in question_id.lower():
@@ -1046,18 +1045,19 @@ async def analyze_questions_with_ai(token: str, questions: list) -> dict:
         course_id = None
         course_skills = []
         
-        # Check if we can extract course from question IDs
-        for question in questions:
-            q_id = question.get('id', '')
-            if 'demo_001' in q_id:
-                course_id = 'demo_001'
-                break
-            elif 'demo_002' in q_id:
-                course_id = 'demo_002'
-                break
-            elif 'demo_003' in q_id:
-                course_id = 'demo_003'
-                break
+        # Check if we can extract course from question IDs (only if demo mode is enabled)
+        if Config.ENABLE_DEMO_MODE:
+            for question in questions:
+                q_id = question.get('id', '')
+                if 'demo_001' in q_id:
+                    course_id = 'demo_001'
+                    break
+                elif 'demo_002' in q_id:
+                    course_id = 'demo_002'
+                    break
+                elif 'demo_003' in q_id:
+                    course_id = 'demo_003'
+                    break
         
         # Get course skills from skill matrix if we have course_id
         if course_id:
@@ -1065,7 +1065,7 @@ async def analyze_questions_with_ai(token: str, questions: list) -> dict:
             course_skills = skill_matrix.get('skills', []) if skill_matrix else []
         
         # Fallback: Use course-specific skills based on common patterns
-        if not course_skills and course_id:
+        if not course_skills and course_id and Config.ENABLE_DEMO_MODE:
             course_skills_map = {
                 'demo_001': ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs'],
                 'demo_002': ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization', 'Stored Procedures'],
