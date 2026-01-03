@@ -7,8 +7,8 @@ import aiohttp
 import asyncio
 import html
 import logging
-import ssl
-
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
 def clean_metadata_text(text: str) -> str:
     """
@@ -83,27 +83,6 @@ def extract_video_id(youtube_url):
     return video_id
 
 
-def get_ssl_context():
-    """Return SSL context that works in development and production."""
-    if Config.ENV == 'development':
-        try:
-            import certifi
-            return ssl.create_default_context(cafile=certifi.where())
-        except Exception as exc:
-            logging.warning("Certifi unavailable, disabling SSL verification: %s", exc)
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-            return ssl_context
-    return True
-
-def create_http_session():
-    ssl_setting = get_ssl_context()
-    if ssl_setting is True:
-        return aiohttp.ClientSession()
-    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
-
-
 async def get_video_metadata(youtube_url):
     """Retrieves metadata for a YouTube video by URL asynchronously."""
     video_id = extract_video_id(youtube_url)
@@ -113,7 +92,7 @@ async def get_video_metadata(youtube_url):
     # YouTube API URL for getting video details
     api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet&id={video_id}&key={Config.YOUTUBE_API_KEY}"
 
-    async with create_http_session() as session:
+    async with aiohttp.ClientSession() as session:
         async with session.get(api_url) as response:
             if response.status == 200:
                 response_data = await response.json()
@@ -131,3 +110,117 @@ async def get_video_metadata(youtube_url):
                     return {"error": "Video not found"}
             else:
                 return {"error": f"Failed to fetch metadata, status code: {response.status}"}
+
+
+async def fetch_video_transcript(video_id_or_url, languages=['en']):
+    """
+    Fetches transcript for a YouTube video.
+    
+    Parameters:
+    - video_id_or_url (str): YouTube video ID or full URL
+    - languages (list): List of language codes to try (default: ['en'])
+    
+    Returns:
+    - dict: Dictionary with transcript data:
+        {
+            'transcript': [...],  # List of transcript segments with text, start, duration
+            'transcript_text': '...',  # Full transcript as plain text
+            'language': 'en',  # Language code of transcript
+            'success': True
+        }
+        OR
+        {
+            'success': False,
+            'error': 'Error message'
+        }
+    """
+    try:
+        # Extract video ID if URL is provided
+        video_id = extract_video_id(video_id_or_url) if 'youtube.com' in video_id_or_url or 'youtu.be' in video_id_or_url else video_id_or_url
+        
+        if not video_id:
+            return {
+                'success': False,
+                'error': 'Invalid video ID or URL'
+            }
+        
+        # Run the synchronous transcript API in a thread pool to make it async-friendly
+        # New API (v1.2.3+) requires instantiating the class
+        def fetch_transcript():
+            api = YouTubeTranscriptApi()
+            fetched_transcript = api.fetch(video_id, languages=languages)
+            # Convert FetchedTranscriptSnippet objects to list of dicts format
+            return [
+                {
+                    'text': snippet.text,
+                    'start': snippet.start,
+                    'duration': snippet.duration
+                }
+                for snippet in fetched_transcript
+            ]
+        
+        loop = asyncio.get_event_loop()
+        transcript_list = await loop.run_in_executor(None, fetch_transcript)
+        
+        # Format transcript data
+        # transcript_list is a list of dicts: [{'text': '...', 'start': 0.0, 'duration': 5.0}, ...]
+        transcript_text = ' '.join([item['text'] for item in transcript_list])
+        
+        return {
+            'success': True,
+            'transcript': transcript_list,
+            'transcript_text': transcript_text,
+            'language': languages[0] if transcript_list else None,
+            'video_id': video_id
+        }
+        
+    except TranscriptsDisabled:
+        return {
+            'success': False,
+            'error': 'Transcripts are disabled for this video'
+        }
+    except NoTranscriptFound:
+        return {
+            'success': False,
+            'error': f'No transcript found for this video in languages: {languages}'
+        }
+    except VideoUnavailable:
+        return {
+            'success': False,
+            'error': 'Video is unavailable or does not exist'
+        }
+    except Exception as e:
+        logging.error(f"Error fetching transcript for video {video_id_or_url}: {e}")
+        return {
+            'success': False,
+            'error': f'Failed to fetch transcript: {str(e)}'
+        }
+
+
+async def enrich_video_with_transcript(video_data, fetch_transcript=False):
+    """
+    Optionally enriches video metadata with transcript data.
+    
+    Parameters:
+    - video_data (dict): Video metadata dictionary
+    - fetch_transcript (bool): Whether to fetch transcript
+    
+    Returns:
+    - dict: Video data with optional transcript fields
+    """
+    if not fetch_transcript or not video_data.get('link'):
+        return video_data
+    
+    video_url = video_data.get('link')
+    transcript_result = await fetch_video_transcript(video_url)
+    
+    if transcript_result.get('success'):
+        video_data['transcript'] = transcript_result.get('transcript')
+        video_data['transcript_text'] = transcript_result.get('transcript_text')
+        video_data['transcript_language'] = transcript_result.get('language')
+        video_data['transcript_fetched'] = True
+    else:
+        video_data['transcript_fetched'] = False
+        video_data['transcript_error'] = transcript_result.get('error')
+    
+    return video_data

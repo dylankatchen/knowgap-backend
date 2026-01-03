@@ -471,9 +471,12 @@ async def get_instructor_course_quizzes(canvas_token: str, course_id: str) -> di
         logger.error(f"Get instructor course quizzes error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
-async def get_instructor_quiz_questions(canvas_token: str, course_id: str, quiz_id: str) -> dict:
+async def get_instructor_quiz_questions(canvas_token: str, quiz_id: str, course_id: str) -> dict:
     """Get all questions in a quiz for instructor."""
     try:
+
+        #for deubuggin
+        logger.info(f"Getting questions for quiz_id = {quiz_id}, course_id={course_id}")
         # Check if this is a demo token
         from services.achieveup_canvas_demo_service import is_demo_token, get_demo_quiz_questions
         if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):

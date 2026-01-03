@@ -5,6 +5,7 @@ from services.video_service import (
     get_assessment_videos, get_course_videos, update_course_videos,
     update_video_link, add_video, remove_video, update_videos_for_filter
 )
+from utils.youtube_utils import fetch_video_transcript, extract_video_id
 
 def init_video_routes(app):
     @app.route('/get-assessment-videos', methods=['POST', 'OPTIONS'])
@@ -151,35 +152,62 @@ def init_video_routes(app):
             return jsonify({'success': True}), 200
         else:
             return jsonify({'error': result.get('error', 'Unknown error')}), 400
+
+    @app.route('/get-video-transcript', methods=['POST', 'OPTIONS'])
+    async def get_video_transcript_route():
+        """
+        Fetches transcript for a YouTube video.
         
-    @app.route('/vote-video', methods=['POST'])
-    async def vote_video_route():
+        Request body:
+        {
+            "video_url": "https://www.youtube.com/watch?v=...",
+            "video_id": "...",  # Optional, alternative to video_url
+            "languages": ["en"]  # Optional, defaults to ["en"]
+        }
+        
+        Response:
+        {
+            "success": true,
+            "transcript": [...],  # List of segments with text, start, duration
+            "transcript_text": "...",  # Full transcript as text
+            "language": "en",
+            "video_id": "..."
+        }
+        OR
+        {
+            "success": false,
+            "error": "Error message"
+        }
+        """
+        if request.method == 'OPTIONS':
+            return '', 204
+        
         try:
             data = await request.get_json()
+            
             if not data:
-                return jsonify({"error": "No JSON body provided"}), 400
-
-            required = ["student_id", "course_id", "question_id", "video_link", "vote"]
-            missing = [k for k in required if k not in data]
-            if missing:
-                return jsonify({"error": f"Missing required parameters: {', '.join(missing)}"}), 400
+                return jsonify({"success": False, "error": "No JSON data received"}), 400
             
-            from services.video_service import vote_video
-            result = await vote_video(
-                data["student_id"],
-                data["course_id"],
-                data["question_id"],
-                data["video_link"],
-                data["vote"]
-            )
-
-            if result.get("success"):
-                #message on success
-                return jsonify({"message": result.get("message", "Vote recorded successfully.")}), 200
+            video_url = data.get('video_url')
+            video_id = data.get('video_id')
+            languages = data.get('languages', ['en'])
             
-            #message on failure
-            return jsonify({"error": result.get("error", "Unknown error")}), 400
-        
+            if not video_url and not video_id:
+                return jsonify({"success": False, "error": "Missing video_url or video_id"}), 400
+            
+            # Use video_id if provided, otherwise extract from URL
+            video_identifier = video_id if video_id else video_url
+            
+            # Fetch transcript
+            result = await fetch_video_transcript(video_identifier, languages=languages)
+            
+            if result.get('success'):
+                return jsonify(result), 200
+            else:
+                return jsonify(result), 404
+                
         except Exception as e:
-            return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
+            return jsonify({
+                "success": False,
+                "error": f"Internal server error: {str(e)}"
+            }), 500
