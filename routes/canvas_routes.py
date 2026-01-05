@@ -241,7 +241,7 @@ async def instructor_quiz_questions_route(course_id, quiz_id):
     """Get all questions in a quiz (instructor token required)."""
     try:
         #debugging 
-        logger.info(f"star route called: /canvas/instructor/quizzes/{quiz_id}/questions")
+        logger.info(f"star route called: /canvas/instructor/courses/{course_id}/quizzes/{quiz_id}/questions")
 
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
@@ -263,7 +263,7 @@ async def instructor_quiz_questions_route(course_id, quiz_id):
         if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
             return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
         
-        course_id = request.args.get('course_id')
+        #course_id = request.args.get('course_id')
 
         #debugging
         logger.info(f"star course_id from query params: {course_id}")
