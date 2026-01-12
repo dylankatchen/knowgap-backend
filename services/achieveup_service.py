@@ -1017,8 +1017,52 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         # Import AI service
         from services.achieveup_ai_service import suggest_skills_for_course
         
+<<<<<<< Updated upstream
         # Generate skills
         skills = await suggest_skills_for_course(course_data)
+=======
+        client = AsyncOpenAI(api_key=Config.OPENAI_API_KEY)
+        
+        course_name = course_data.get('courseName', '')
+        course_code = course_data.get('courseCode', '')
+        course_description = course_data.get('courseDescription', '')
+        
+        prompt = f"""
+        Generate 8-12 specific, measurable skills for this course max six words per skill.
+        Make the brief description one sentence.
+        
+        Course: {course_name}
+        Code: {course_code}
+        Description: {course_description}
+        
+        Return ONLY valid JSON array:
+        [{{"skill": "Skill Name", "description": "Brief description", "relevance": 0.9}}, ...]
+        
+        Make skills specific to the course subject matter.
+        """
+        
+        response = await client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert curriculum designer. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            #temperature=0.7,
+            max_completion_tokens=10000
+        )
+
+        print(response,"this is the response")
+
+        ai_response = response.choices[0].message.content.strip()
+        
+        # Parse JSON response
+        import re
+        json_match = re.search(r'\[.*\]', ai_response, re.DOTALL)
+        if json_match:
+            skills = json.loads(json_match.group())
+        else:
+            skills = json.loads(ai_response)
+>>>>>>> Stashed changes
         
         return {
             'courseId': course_data.get('courseId'),
