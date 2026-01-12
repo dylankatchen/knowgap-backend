@@ -36,10 +36,10 @@ async def generate_core_topic(question_text, course_name, course_context=""):
     try:
         # Make the async call to GPT using the client
         response = await client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-5-min",
             messages=messages,
-            temperature=0.7,
-            max_tokens=50,
+            #temperature=0.7,
+            max_completion_tokens=10000,
             top_p=0.5
         )
         

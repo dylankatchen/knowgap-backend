@@ -5,6 +5,8 @@ import json
 import re
 import os
 from typing import List, Dict, Any
+#haley code
+from openai import AsyncOpenAI
 import openai
 from datetime import datetime
 
@@ -12,7 +14,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # OpenAI configuration
-openai.api_key = os.environ.get('OPENAI_API_KEY')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 
 # Course code to skill category mapping for fallback
 COURSE_CODE_MAPPINGS = {
@@ -87,14 +89,25 @@ async def generate_ai_skill_suggestions(course_data: Dict[str, Any]) -> List[Dic
         - Make skills relevant to the course subject matter
         """
         
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
+        #haleys work
+        #response = openai.ChatCompletion.create(
+            #model="gpt-5-mini",
+            #message=[
+            #    {"role": "system", "content": "You are an expert curriculum designer who creates specific, measurable learning outcomes."},
+            #    {"role": "user", "content": prompt}
+            #],
+            #temperature=0.3,
+            #max_completion_tokens=1000
+        #)
+        client=AsyncOpenAI(api_key=OPENAI_API_KEY)
+        response = await client.chat.completions.create(
+            model="gpt-5-mini",
+            message=[
                 {"role": "system", "content": "You are an expert curriculum designer who creates specific, measurable learning outcomes."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
-            max_tokens=1000
+            #temperature = 0.3,
+            max_completion_tokens=1000
         )
         
         content = response.choices[0].message.content.strip()
@@ -337,16 +350,30 @@ async def classify_question_skills_ai(question_text: str, available_skills: List
         
         Only include skills that are directly relevant to the question content.
         """
-        
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+        #haleys Code
+        #response = openai.ChatCompletion.create(
+        #    model="gpt-5-mini",
+        #    messages=[
+        #        {"role": "system", "content": "You are an expert at mapping educational content to learning skills."},
+        #        {"role": "user", "content": prompt}
+        #    ],
+        #    temperature=0.1,
+        #    max_completion_tokens=200
+        #)
+
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+        response = await client.chat.completions.create(
+            model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": "You are an expert at mapping educational content to learning skills."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
-            max_tokens=200
+            #temperature=0.1,
+            max_completion_tokens=10000
         )
+
+        #end haleys code
         
         content = response.choices[0].message.content.strip()
         

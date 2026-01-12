@@ -70,12 +70,12 @@ AchieveUp is an AI-powered skill tracking system that transforms traditional ass
 
 ### **OpenAI Integration**
 ```python
-# Primary AI with GPT-3.5-turbo
+# Primary AI with GPT-5-mini
 async def generate_ai_skill_suggestions(course_data):
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+        model="gpt-5-mini",
         messages=[{"role": "system", "content": "Expert curriculum designer..."}],
-        temperature=0.3
+        #temperature=0.3
     )
 ```
 
