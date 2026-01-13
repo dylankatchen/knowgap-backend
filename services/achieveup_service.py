@@ -1006,6 +1006,34 @@ async def get_instructor_student_analytics(token: str, course_id: str) -> dict:
         logger.error(f"Get instructor student analytics error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
+#async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
+    #"""Generate AI-powered skill suggestions for a course."""
+    #try:
+        # Verify user token
+        #user_result = await achieveup_verify_token(token)
+        #if 'error' in user_result:
+        #    return user_result
+        
+        # Import AI service
+        #from services.achieveup_ai_service import suggest_skills_for_course
+        #from openai import AsyncOpenAI
+        #import json
+        
+        # Generate skills
+        #skills = await suggest_skills_for_course(course_data)
+        
+        #return {
+        #    'courseId': course_data.get('courseId'),
+        #    'courseName': course_data.get('courseName'),
+        #    'suggestedSkills': skills,
+        #    'generatedAt': datetime.utcnow().isoformat(),
+        #    'method': 'ai' if any('relevance' in skill and skill['relevance'] > 0.85 for skill in skills) else 'fallback'
+        #}
+        
+    #except Exception as e:
+    #    logger.error(f"AI skill suggestion error: {str(e)}")
+    #   return {'error': 'Internal server error', 'statusCode': 500}
+
 async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
     """Generate AI-powered skill suggestions for a course."""
     try:
@@ -1014,13 +1042,10 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         if 'error' in user_result:
             return user_result
         
-        # Import AI service
-        from services.achieveup_ai_service import suggest_skills_for_course
+        # Use OpenAI directly with proper async syntax
+        from openai import AsyncOpenAI
+        import json
         
-<<<<<<< Updated upstream
-        # Generate skills
-        skills = await suggest_skills_for_course(course_data)
-=======
         client = AsyncOpenAI(api_key=Config.OPENAI_API_KEY)
         
         course_name = course_data.get('courseName', '')
@@ -1028,8 +1053,7 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         course_description = course_data.get('courseDescription', '')
         
         prompt = f"""
-        Generate 8-12 specific, measurable skills for this course max six words per skill.
-        Make the brief description one sentence.
+        Generate 8-12 specific, measurable skills for this course.
         
         Course: {course_name}
         Code: {course_code}
@@ -1048,11 +1072,9 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
                 {"role": "user", "content": prompt}
             ],
             #temperature=0.7,
-            max_completion_tokens=10000
+            max_completion_tokens=1000
         )
-
-        print(response,"this is the response")
-
+        
         ai_response = response.choices[0].message.content.strip()
         
         # Parse JSON response
@@ -1062,19 +1084,20 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
             skills = json.loads(json_match.group())
         else:
             skills = json.loads(ai_response)
->>>>>>> Stashed changes
         
         return {
             'courseId': course_data.get('courseId'),
-            'courseName': course_data.get('courseName'),
-            'suggestedSkills': skills,
+            'courseName': course_name,
+            'skills': skills,  # Changed from 'suggestedSkills' to match frontend expectation
             'generatedAt': datetime.utcnow().isoformat(),
-            'method': 'ai' if any('relevance' in skill and skill['relevance'] > 0.85 for skill in skills) else 'fallback'
+            'method': 'ai'
         }
         
     except Exception as e:
         logger.error(f"AI skill suggestion error: {str(e)}")
-        return {'error': 'Internal server error', 'statusCode': 500}
+        import traceback
+        traceback.print_exc()
+        return {'error': 'Internal server error', 'message': str(e), 'statusCode': 500}
 
 async def analyze_questions_with_ai(token: str, questions: list) -> dict:
     """Analyze questions using AI for complexity and skill mapping."""

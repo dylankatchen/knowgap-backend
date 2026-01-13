@@ -61,7 +61,9 @@ class Config:
     # Canvas API Configuration
     CANVAS_API_RATE_LIMIT = int(os.getenv("CANVAS_API_RATE_LIMIT", "100"))  # requests per minute
     SUBMISSION_CACHE_TTL = int(os.getenv("SUBMISSION_CACHE_TTL", "3600"))  # 1 hour in seconds
-    
+
+    #AI configuration
+    OPENAI_API_KEY= os.getenv("OPENAI_KEY")
     # Feature Flags
     ENABLE_DEMO_MODE = os.getenv("ENABLE_DEMO_MODE", "true").lower() == "true"  # Default to true for backward compatibility
     ENABLE_SUBMISSION_CACHE = os.getenv("ENABLE_SUBMISSION_CACHE", "false").lower() == "true"  # Default to false to minimize storage
