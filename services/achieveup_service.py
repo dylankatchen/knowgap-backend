@@ -233,6 +233,36 @@ async def assign_skills_to_questions(token: str, course_id: str, question_skills
     except Exception as e:
         logger.error(f"Assign skills error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
+    
+async def get_assigned_skills(token: str, course_id: str, question_ids:list[str]) -> dict:
+    """Get skill assigned for a quiz."""
+    try:
+        # Verify user token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+        
+        if not course_id or not question_ids:
+                    return {
+                        'error': 'Missing required fields',
+                        'message': 'course_id and question_ids are required',
+                        'statusCode': 400
+                    }
+
+
+        # Find skills
+        cursor = achieveup_question_skills_collection.find( {'course_id': course_id, 'question_id': {'$in': question_ids}},
+            {'_id': 0})
+        
+        docs = await cursor.to_list(length=None)
+        return {
+            'course_id': course_id,
+            'question_skills': {str(d['question_id']): d.get('skills', []) for d in docs}
+        }
+
+    except Exception as e:
+        logger.error(f"Get assigned skills error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
 
 async def suggest_skills_for_question(token: str, question_text: str, course_context: str = None) -> dict:
     """Suggest skills for a quiz question using AI."""
@@ -622,6 +652,8 @@ async def get_instructor_course_analytics(token: str, course_id: str) -> dict:
     except Exception as e:
         logger.error(f"Get instructor course analytics error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
+    
+   
 
 async def analyze_questions(token: str, questions: list) -> dict:
     """Analyze question complexity and suggest skills for multiple questions."""

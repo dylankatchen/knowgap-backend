@@ -14,7 +14,8 @@ from services.achieveup_service import (
     import_course_data,
     analyze_questions,
     get_question_suggestions,
-    get_all_skill_matrices_by_course  # Add new import
+    get_all_skill_matrices_by_course,
+    get_assigned_skills  # Add new import
 )
 import logging
 
@@ -248,6 +249,54 @@ async def assign_skills_to_questions_route():
             'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500
+    
+@achieveup_bp.route('/achieveup/skills/assignments', methods=['GET'])
+async def get_assigned_skills_route():
+    """Get assigned skills. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        # Read query params
+        course_id = request.args.get('course_id')
+        question_ids = request.args.getlist('question_id')
+
+        if not course_id or not question_ids:
+            return jsonify({
+                'error': 'Missing required fields',
+                'message': 'course_id and question_id are required',
+                'statusCode': 400
+            }), 400
+
+        # Call service
+        result = await get_assigned_skills(token, course_id, question_ids)
+
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result['statusCode']
+            }), result['statusCode']
+
+        return jsonify(result), 200
+
+    except Exception:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+
+
 
 @achieveup_bp.route('/achieveup/skills/suggest', methods=['POST'])
 async def suggest_skills_for_question_route():
