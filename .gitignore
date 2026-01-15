@@ -15,3 +15,9 @@ AUTHENTICATION_FIX_403_ERROR.txt
 *.pyc
 __pycache__
 .env
+# Virtual environment
+venv/
+.venv/
+env/
+*.pyc
+__pycache__/
