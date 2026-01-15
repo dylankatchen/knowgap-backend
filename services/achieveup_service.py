@@ -264,43 +264,119 @@ async def get_assigned_skills(token: str, course_id: str, question_ids:list[str]
         logger.error(f"Get assigned skills error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
-async def suggest_skills_for_question(token: str, question_text: str, course_context: str = None) -> dict:
-    """Suggest skills for a quiz question using AI."""
+async def suggest_skills_for_question(token: str, question_text: str, course_id: str = None, matrix_id: str = None, course_context: str = None) -> dict:
+    """Suggest skills for a quiz question using AI and the selected skill matrix."""
     try:
         # Verify user token
         user_result = await achieveup_verify_token(token)
         if 'error' in user_result:
             return user_result
         
-        # Simple keyword-based skill suggestion (can be enhanced with AI)
-        suggested_skills = []
+        # Get the skill matrix to use
+        available_skills = []
         
-        # Common skill keywords
-        skill_keywords = {
-            'problem_solving': ['solve', 'problem', 'analyze', 'evaluate'],
-            'critical_thinking': ['think', 'critical', 'reason', 'logic'],
-            'communication': ['explain', 'describe', 'communicate', 'present'],
-            'technical_skills': ['code', 'program', 'algorithm', 'data'],
-            'research': ['research', 'find', 'investigate', 'explore'],
-            'creativity': ['create', 'design', 'innovate', 'imagine']
-        }
+        if matrix_id:
+            # Use the specified matrix
+            matrix = await achieveup_skill_matrices_collection.find_one({'_id': matrix_id})
+            if matrix and 'skills' in matrix:
+                available_skills = matrix['skills']
+        elif course_id:
+            # Get the first/default matrix for the course
+            matrix = await achieveup_skill_matrices_collection.find_one({'course_id': str(course_id)})
+            if matrix and 'skills' in matrix:
+                available_skills = matrix['skills']
         
+        # If no skills found in matrix, return empty suggestions
+        if not available_skills:
+            return {
+                'suggestions': [],
+                'confidence': 0.0,
+                'message': 'No skill matrix found' if matrix_id or course_id else 'No matrix_id or course_id provided'
+            }
+        
+        # Prepare question content for analysis
         question_lower = question_text.lower()
         context_lower = course_context.lower() if course_context else ""
+        combined_content = f"{question_lower} {context_lower}"
         
-        for skill, keywords in skill_keywords.items():
-            for keyword in keywords:
-                if keyword in question_lower or keyword in context_lower:
-                    suggested_skills.append(skill)
-                    break
+        # Score each skill based on semantic relevance
+        skill_scores = []
         
-        # Remove duplicates
-        suggested_skills = list(set(suggested_skills))
+        for skill in available_skills:
+            skill_name = skill if isinstance(skill, str) else skill.get('name', '')
+            skill_lower = skill_name.lower()
+            
+            # Calculate relevance score
+            score = 0.0
+            
+            # 1. Direct match - highest score
+            if skill_lower in combined_content or any(word in combined_content for word in skill_lower.split()):
+                score += 0.9
+            
+            # 2. Keyword overlap - extract key terms from skill name and check overlap
+            skill_keywords = set(skill_lower.replace('/', ' ').replace('&', ' ').replace('(', ' ').replace(')', ' ').split())
+            skill_keywords = {word for word in skill_keywords if len(word) > 2}  # Filter short words
+            
+            question_words = set(combined_content.replace('/', ' ').replace('&', ' ').replace('(', ' ').replace(')', ' ').split())
+            question_words = {word for word in question_words if len(word) > 2}
+            
+            overlap = skill_keywords & question_words
+            if overlap:
+                score += 0.6 * (len(overlap) / max(len(skill_keywords), 1))
+            
+            # 3. Common technical terms mapping
+            technical_mappings = {
+                'javascript': ['js', 'function', 'variable', 'array', 'object', 'async', 'promise', 'callback'],
+                'html': ['tag', 'element', 'markup', 'div', 'span', 'semantic'],
+                'css': ['style', 'layout', 'flexbox', 'grid', 'responsive', 'selector'],
+                'sql': ['query', 'select', 'insert', 'update', 'delete', 'join', 'table'],
+                'database': ['schema', 'table', 'index', 'normalization', 'entity', 'relationship'],
+                'network': ['tcp', 'ip', 'protocol', 'packet', 'router', 'switch', 'firewall'],
+                'security': ['encryption', 'authentication', 'authorization', 'firewall', 'vpn'],
+                'api': ['rest', 'endpoint', 'request', 'response', 'http', 'fetch'],
+                'dom': ['element', 'event', 'manipulation', 'document', 'node'],
+                'responsive': ['mobile', 'breakpoint', 'media query', 'viewport']
+            }
+            
+            for key, terms in technical_mappings.items():
+                if key in skill_lower:
+                    for term in terms:
+                        if term in combined_content:
+                            score += 0.4
+                            break
+            
+            # Only include skills with some relevance
+            if score > 0:
+                skill_scores.append({
+                    'skill': skill_name,
+                    'score': min(score, 1.0)  # Cap at 1.0
+                })
         
-        return suggested_skills
+        # Sort by score and take top 3
+        skill_scores.sort(key=lambda x: x['score'], reverse=True)
+        top_skills = skill_scores[:3]
+        
+        # If no skills matched, return top 3 skills from matrix with low confidence
+        if not top_skills:
+            top_skills = [
+                {'skill': skill if isinstance(skill, str) else skill.get('name', ''), 'score': 0.5}
+                for skill in available_skills[:3]
+            ]
+        
+        # Calculate overall confidence
+        overall_confidence = sum(s['score'] for s in top_skills) / len(top_skills) if top_skills else 0.0
+        
+        return {
+            'suggestions': [s['skill'] for s in top_skills],
+            'confidence': round(overall_confidence, 2),
+            'scores': {s['skill']: round(s['score'], 2) for s in top_skills},
+            'available_skills': [skill if isinstance(skill, str) else skill.get('name', '') for skill in available_skills]
+        }
         
     except Exception as e:
         logger.error(f"Suggest skills error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def generate_badges_for_student(token: str, student_id: str, course_id: str, skill_levels: dict) -> dict:
@@ -655,7 +731,7 @@ async def get_instructor_course_analytics(token: str, course_id: str) -> dict:
     
    
 
-async def analyze_questions(token: str, questions: list) -> dict:
+async def analyze_questions(token: str, questions: list, course_id: str = None, matrix_id: str = None) -> dict:
     """Analyze question complexity and suggest skills for multiple questions."""
     try:
         # Verify user token
@@ -675,16 +751,21 @@ async def analyze_questions(token: str, questions: list) -> dict:
             # Analyze question complexity
             complexity = analyze_question_complexity(question_text)
             
-            # Get skill suggestions
-            suggested_skills = await suggest_skills_for_question(token, question_text)
+            # Get skill suggestions from the specified matrix
+            suggested_skills_result = await suggest_skills_for_question(token, question_text, course_id, matrix_id)
             
-            # Calculate confidence score
-            confidence = calculate_confidence_score(question_text, suggested_skills)
+            # Extract suggested skills from result
+            if isinstance(suggested_skills_result, dict):
+                suggested_skills = suggested_skills_result.get('suggestions', [])
+                confidence = suggested_skills_result.get('confidence', 0.0)
+            else:
+                suggested_skills = suggested_skills_result if isinstance(suggested_skills_result, list) else []
+                confidence = calculate_confidence_score(question_text, suggested_skills)
             
             analysis_results.append({
                 'questionId': question_id,
                 'complexity': complexity,
-                'suggestedSkills': suggested_skills if isinstance(suggested_skills, list) else [],
+                'suggestedSkills': suggested_skills,
                 'confidence': confidence
             })
         
@@ -1085,7 +1166,7 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         course_description = course_data.get('courseDescription', '')
         
         prompt = f"""
-        Generate 8-12 specific, measurable skills for this course.
+        Generate 8-12 specific, measurable skills for this course. They should be about 3-5 words.
         
         Course: {course_name}
         Code: {course_code}
@@ -1104,7 +1185,7 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
                 {"role": "user", "content": prompt}
             ],
             #temperature=0.7,
-            max_completion_tokens=1000
+            max_completion_tokens=10000
         )
         
         ai_response = response.choices[0].message.content.strip()
@@ -1168,7 +1249,7 @@ async def get_all_skills_for_course(token: str, course_id: str) -> dict:
         return {'error': 'Internal server error', 'statusCode': 500}
 
 
-async def analyze_questions_with_ai(token: str, questions: list, course_id: str) -> dict:
+async def analyze_questions_with_ai(token: str, questions: list, course_id: str, matrix_id: str = None) -> dict:
     """Analyze questions using AI for complexity and skill mapping."""
     try:
         # Verify user token
@@ -1176,13 +1257,33 @@ async def analyze_questions_with_ai(token: str, questions: list, course_id: str)
         if 'error' in user_result:
             return user_result
         
-        # Extract course_id from the questions context if available
-        # Try to determine course from question IDs or request context
-        #course_id = None
         course_skills = []
+        matrix_used = None
         
-        # Check if we can extract course from question IDs (only if demo mode is enabled)
-        if Config.ENABLE_DEMO_MODE:
+        # Priority 1: Use the specified matrix_id if provided
+        if matrix_id:
+            logger.info(f"Using specified matrix_id: {matrix_id}")
+            matrix = await achieveup_skill_matrices_collection.find_one({'_id': matrix_id})
+            if matrix and 'skills' in matrix:
+                course_skills = matrix['skills']
+                matrix_used = matrix.get('matrix_name', matrix_id)
+                logger.info(f"Found matrix '{matrix_used}' with {len(course_skills)} skills")
+            else:
+                logger.warning(f"Matrix {matrix_id} not found")
+        
+        # Priority 2: If no matrix_id or matrix not found, try getting the FIRST matrix for the course
+        # (This is better than getting ALL skills from ALL matrices)
+        if not course_skills and course_id:
+            logger.info(f"No matrix_id provided or found, getting first matrix for course: {course_id}")
+            matrix = await achieveup_skill_matrices_collection.find_one({'course_id': str(course_id)})
+            if matrix and 'skills' in matrix:
+                course_skills = matrix['skills']
+                matrix_used = matrix.get('matrix_name', 'default')
+                logger.info(f"Using first matrix '{matrix_used}' with {len(course_skills)} skills")
+        
+        # Priority 3: Extract course_id from demo questions (only if demo mode is enabled)
+        if not course_skills and Config.ENABLE_DEMO_MODE:
+            logger.info("Attempting to detect course from question IDs (demo mode)")
             for question in questions:
                 q_id = question.get('id', '')
                 if 'demo_001' in q_id:
@@ -1194,36 +1295,25 @@ async def analyze_questions_with_ai(token: str, questions: list, course_id: str)
                 elif 'demo_003' in q_id:
                     course_id = 'demo_003'
                     break
+            
+            # Try again with detected course_id
+            if course_id:
+                matrix = await achieveup_skill_matrices_collection.find_one({'course_id': str(course_id)})
+                if matrix and 'skills' in matrix:
+                    course_skills = matrix['skills']
+                    matrix_used = matrix.get('matrix_name', 'demo')
         
-        # Get course skills from skill matrix if we have course_id
-        if course_id: #achieveup_skill_matrices_collection.find_one({'course_id': course_id})
-            skills_result = await get_all_skills_for_course(token, course_id)
-            course_skills = skills_result.get('skills', [])
-
-        
-        
-        """
-        # Fallback: Use course-specific skills based on common patterns
-        if not course_skills and course_id and Config.ENABLE_DEMO_MODE:
-            course_skills_map = {
-                'demo_001': ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs'],
-                'demo_002': ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization', 'Stored Procedures'],
-                'demo_003': ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting']
-            }
-            course_skills = course_skills_map.get(course_id, [])
-        
-        # If still no skills, try to infer from question content
+        # If still no skills found, return error
         if not course_skills:
-            all_text = ' '.join([q.get('text', '') + ' ' + q.get('id', '') for q in questions]).lower()
-            if any(keyword in all_text for keyword in ['javascript', 'html', 'css', 'web', 'dom']):
-                course_skills = ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs']
-            elif any(keyword in all_text for keyword in ['sql', 'database', 'table', 'query']):
-                course_skills = ['SQL Fundamentals', 'Database Design', 'Data Normalization', 'Query Optimization', 'Stored Procedures']
-            elif any(keyword in all_text for keyword in ['network', 'tcp', 'ip', 'router', 'protocol']):
-                course_skills = ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting']
-            else:
-                course_skills = ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs']  # Default to web dev
-        """
+            logger.error(f"No skill matrix found for course_id={course_id}, matrix_id={matrix_id}")
+            return {
+                'error': 'No skill matrix found',
+                'message': f'Please create a skill matrix for course {course_id} or provide a valid matrix_id',
+                'statusCode': 404
+            }
+        
+        logger.info(f"Analyzing {len(questions)} questions with {len(course_skills)} skills from matrix '{matrix_used}'")
+        
         # Import AI service
         from services.achieveup_ai_service import analyze_questions
         
@@ -1235,11 +1325,16 @@ async def analyze_questions_with_ai(token: str, questions: list, course_id: str)
             'analyses': analysis_results,
             'generatedAt': datetime.utcnow().isoformat(),
             'course_id': course_id,
-            'course_skills_used': course_skills
+            'matrix_id': matrix_id,
+            'matrix_used': matrix_used,
+            'course_skills_used': course_skills,
+            'skill_count': len(course_skills)
         }
         
     except Exception as e:
         logger.error(f"AI question analysis error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def bulk_assign_skills_with_ai(token: str, course_id: str, questions: list) -> dict:

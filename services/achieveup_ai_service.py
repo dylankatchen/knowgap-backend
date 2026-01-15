@@ -8,12 +8,13 @@ from typing import List, Dict, Any
 from openai import AsyncOpenAI
 import openai
 from datetime import datetime
+from config import Config
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 # OpenAI configuration
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY') or Config.OPENAI_KEY
 
 # Course code to skill category mapping for fallback
 COURSE_CODE_MAPPINGS = {
@@ -57,7 +58,7 @@ async def suggest_skills_for_course(course_data: Dict[str, Any]) -> List[Dict[st
 
 async def generate_ai_skill_suggestions(course_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Generate skill suggestions using OpenAI."""
-    if not openai.api_key:
+    if not OPENAI_API_KEY:
         logger.warning("OpenAI API key not configured")
         return None
     
@@ -300,10 +301,14 @@ async def map_question_to_skills(question: Dict[str, Any], available_skills: Lis
     
     try:
         # Try AI-based classification first
-        if openai.api_key:
+        if OPENAI_API_KEY:
+            logger.info(f"Attempting AI classification for question (skills available: {len(available_skills)})")
             ai_skills = await classify_question_skills_ai(question_text, available_skills)
             if ai_skills:
+                logger.info(f"AI returned {len(ai_skills)} skills: {ai_skills}")
                 suggested_skills = ai_skills
+            else:
+                logger.info("AI classification returned no skills")
     except Exception as e:
         logger.error(f"AI skill classification failed: {str(e)}")
     
@@ -324,10 +329,12 @@ async def map_question_to_skills(question: Dict[str, Any], available_skills: Lis
 
 async def classify_question_skills_ai(question_text: str, available_skills: List[str]) -> List[str]:
     """Use OpenAI to classify question skills."""
-    if not openai.api_key or len(available_skills) == 0:
+    if not OPENAI_API_KEY or len(available_skills) == 0:
+        logger.warning(f"AI classification skipped: API_KEY={'present' if OPENAI_API_KEY else 'missing'}, skills_count={len(available_skills)}")
         return None
     
     try:
+        logger.info(f"Calling OpenAI API to classify question with {len(available_skills)} available skills")
         prompt = f"""
         Given this question and list of available skills, identify which skills (1-3) are most relevant to answering this question.
         

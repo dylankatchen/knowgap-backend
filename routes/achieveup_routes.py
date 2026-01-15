@@ -323,6 +323,8 @@ async def suggest_skills_for_question_route():
         
         question_text = data.get('question_text')
         course_context = data.get('course_context')
+        course_id = data.get('course_id')
+        matrix_id = data.get('matrix_id')
         
         if not question_text:
             return jsonify({
@@ -331,8 +333,8 @@ async def suggest_skills_for_question_route():
                 'statusCode': 400
             }), 400
         
-        # Call service
-        result = await suggest_skills_for_question(token, question_text, course_context)
+        # Call service with new parameters
+        result = await suggest_skills_for_question(token, question_text, course_id, matrix_id, course_context)
         
         if 'error' in result:
             return jsonify({
@@ -809,6 +811,8 @@ async def analyze_questions_route():
             }), 400
         
         questions = data.get('questions', [])
+        course_id = data.get('course_id')
+        matrix_id = data.get('matrix_id')
         
         if not questions:
             return jsonify({
@@ -817,8 +821,8 @@ async def analyze_questions_route():
                 'statusCode': 400
             }), 400
         
-        # Call service
-        result = await analyze_questions(token, questions)
+        # Call service with course_id and matrix_id
+        result = await analyze_questions(token, questions, course_id, matrix_id)
         
         if 'error' in result:
             return jsonify({
@@ -1160,6 +1164,7 @@ async def achieveup_ai_suggest_skills_route():
 @achieveup_bp.route('/achieveup/ai/analyze-questions', methods=['POST'])
 async def achieveup_ai_analyze_questions_route():
     """AI-powered question analysis (frontend-requested endpoint). (AchieveUp only)"""
+    print('is this being called? line 1163')
     try:
         # Get token from Authorization header
         auth_header = request.headers.get('Authorization')
@@ -1187,10 +1192,11 @@ async def achieveup_ai_analyze_questions_route():
         
         course_id = data.get('courseId')
         quiz_id = data.get('quizId')
+        matrix_id = data.get('matrixId') or data.get('matrix_id')
         questions = data.get('questions', [])
         
         # LOG PARSED DATA
-        logger.info(f"Parsed: courseId={course_id}, quizId={quiz_id}, questions_count={len(questions)}")
+        logger.info(f"Parsed: courseId={course_id}, quizId={quiz_id}, matrixId={matrix_id}, questions_count={len(questions)}")
         
         # RELAXED VALIDATION - Only questions array is truly required
         validation_errors = []
@@ -1217,15 +1223,16 @@ async def achieveup_ai_analyze_questions_route():
                 'received_data': {
                     'courseId': course_id,
                     'quizId': quiz_id,
+                    'matrixId': matrix_id,
                     'questions_count': len(questions) if questions else 0,
                     'questions_sample': questions[:2] if questions else []  # Show first 2 questions for debugging
                 },
                 'statusCode': 400
             }), 400
         
-        # Call the AI service
+        # Call the AI service with matrix_id
         from services.achieveup_service import analyze_questions_with_ai
-        result = await analyze_questions_with_ai(token, questions, course_id)
+        result = await analyze_questions_with_ai(token, questions, course_id, matrix_id)
         
         if 'error' in result:
             logger.error(f"AI service error: {result}")
