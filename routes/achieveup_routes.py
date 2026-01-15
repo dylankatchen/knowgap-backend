@@ -1225,7 +1225,7 @@ async def achieveup_ai_analyze_questions_route():
         
         # Call the AI service
         from services.achieveup_service import analyze_questions_with_ai
-        result = await analyze_questions_with_ai(token, questions)
+        result = await analyze_questions_with_ai(token, questions, course_id)
         
         if 'error' in result:
             logger.error(f"AI service error: {result}")

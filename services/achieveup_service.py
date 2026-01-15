@@ -1130,8 +1130,45 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         import traceback
         traceback.print_exc()
         return {'error': 'Internal server error', 'message': str(e), 'statusCode': 500}
+    
+async def get_all_skills_for_course(token: str, course_id: str) -> dict:
+    """Get a deduplicated list of all skills from all matrices in a course."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
 
-async def analyze_questions_with_ai(token: str, questions: list) -> dict:
+        # Reuse your existing service that fetches all matrices
+        matrices_result = await get_all_skill_matrices_by_course(token, course_id)
+        if 'error' in matrices_result:
+            return matrices_result
+
+        matrices = matrices_result.get('matrices', [])
+
+        # Collect + dedupe skills while preserving order
+        seen = set()
+        all_skills: list[str] = []
+
+        for matrix in matrices:
+            skills = matrix.get('skills', []) or []
+            for s in skills:
+                if s and s not in seen:
+                    seen.add(s)
+                    all_skills.append(s)
+
+        return {
+            'course_id': course_id,
+            'matrix_count': len(matrices),
+            'skill_count': len(all_skills),
+            'skills': all_skills
+        }
+
+    except Exception as e:
+        logger.error(f"Get all skills for course error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+
+async def analyze_questions_with_ai(token: str, questions: list, course_id: str) -> dict:
     """Analyze questions using AI for complexity and skill mapping."""
     try:
         # Verify user token
@@ -1141,7 +1178,7 @@ async def analyze_questions_with_ai(token: str, questions: list) -> dict:
         
         # Extract course_id from the questions context if available
         # Try to determine course from question IDs or request context
-        course_id = None
+        #course_id = None
         course_skills = []
         
         # Check if we can extract course from question IDs (only if demo mode is enabled)
@@ -1159,10 +1196,13 @@ async def analyze_questions_with_ai(token: str, questions: list) -> dict:
                     break
         
         # Get course skills from skill matrix if we have course_id
-        if course_id:
-            skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
-            course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        if course_id: #achieveup_skill_matrices_collection.find_one({'course_id': course_id})
+            skills_result = await get_all_skills_for_course(token, course_id)
+            course_skills = skills_result.get('skills', [])
+
         
+        
+        """
         # Fallback: Use course-specific skills based on common patterns
         if not course_skills and course_id and Config.ENABLE_DEMO_MODE:
             course_skills_map = {
@@ -1183,7 +1223,7 @@ async def analyze_questions_with_ai(token: str, questions: list) -> dict:
                 course_skills = ['Network Protocols (TCP/IP)', 'Network Security', 'Routing & Switching', 'Wireless Networks', 'Network Troubleshooting']
             else:
                 course_skills = ['HTML/CSS Fundamentals', 'JavaScript Programming', 'DOM Manipulation', 'Responsive Design', 'Web APIs']  # Default to web dev
-        
+        """
         # Import AI service
         from services.achieveup_ai_service import analyze_questions
         
