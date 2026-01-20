@@ -46,7 +46,7 @@ async def test_api_endpoint():
     
     import aiohttp
     
-    backend_url = "http://localhost:5000"
+    backend_url = "http://127.0.0.1:5001"
     video_url = "https://www.youtube.com/watch?v=0QzopZ78w9M"
     
     print(f"\nTesting endpoint: {backend_url}/get-video-transcript")
@@ -65,7 +65,10 @@ async def test_api_endpoint():
             async with session.post(
                 f"{backend_url}/get-video-transcript",
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": "http://127.0.0.1:5001"  # Required for CORS
+                }
             ) as response:
                 status = response.status
                 data = await response.json()
