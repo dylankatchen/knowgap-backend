@@ -41,6 +41,8 @@ app = cors(app,
         "https://canvas.instructure.com",  # Allow Canvas
         "https://webcourses.ucf.edu",  # Allow UCF Canvas
         "http://localhost:3000",  # Allow AchieveUp frontend development
+        "http://localhost:5001",  # Allow local API testing
+        "http://127.0.0.1:5001",  # Allow local API testing (IP)
         "https://achieveup.netlify.app"  # Allow AchieveUp frontend production
     ],
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
@@ -173,4 +175,4 @@ async def startup():
     logger.info("Application startup complete")
 
 if __name__ == "__main__":
-    app.run(debug=True, use_reloader=False)
+    app.run(debug=True, use_reloader=False, port=5001)
