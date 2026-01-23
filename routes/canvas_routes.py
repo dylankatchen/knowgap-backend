@@ -146,7 +146,7 @@ async def test_canvas_connection_route():
         if not canvas_token:
             return jsonify({
                 'connected': False,
-                'message': 'No Canvas API token found. Please add your Canvas API token in settings.'
+                'message': 'If you see this message the backedn has live updates from mainNo Canvas API token found. Please add your Canvas API token in settings.'
             }), 200
         
         # Test the stored token
