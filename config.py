@@ -20,7 +20,7 @@ class Config:
     YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/search"
 
     # Environment-based database selection
-    ENV = os.getenv("ENVIRONMENT", "development")
+    ENV = os.getenv("ENVIRONMENT", "production")
     DATABASE = "KnowGap_Dev" if ENV == "development" else "KnowGap"
 
     # Database collection names (no prefix needed - separate databases)
