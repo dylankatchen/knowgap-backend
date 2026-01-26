@@ -1,5 +1,6 @@
 from quart import request, jsonify
-from services.course_service import update_context, update_student_quiz_data, get_incorrect_question_data, get_questions_by_course, update_quiz_reccs, update_quiz_questions_per_course, get_student_grade, get_student_profile, sync_all_quizzes_questions
+from services.achieveup_auth_service import achieveup_verify_token
+from services.course_service import update_context,update_course_risk_toggle, get_course_risk_toggle, update_student_quiz_data, get_incorrect_question_data, get_questions_by_course, update_quiz_reccs, update_quiz_questions_per_course, get_student_grade, get_student_profile, sync_all_quizzes_questions
 from services.video_service import update_course_videos
 from utils.course_utils import get_quizzes
 from quart_cors import cors
@@ -160,6 +161,49 @@ def init_course_routes(app):
         if grade is None:
             return jsonify({'status': 'Error', 'message': 'Could not fetch grade'}), 500
         return jsonify({'status': 'Success', 'grade': grade}), 200
+    
+    @app.route('/get-toggle-risk/<course_id>', methods=['GET'])
+    async def get_toggle_risk_route(course_id):
+        """Get the risk toggle for course"""
+        try:
+            result = await get_course_risk_toggle(course_id)
+        
+            if 'status' in result and result['status'] == 'Error':
+                print(f"Error getting toggle risk: {result}")
+                return jsonify(result), 500
+        
+            return jsonify(result), 200
+        
+        except Exception as e:
+            print(f"Error in get toggle risk route: {str(e)}")
+            return jsonify({'status': 'Error', 'message': str(e)}), 500
+        
+    @app.route('/update-toggle-risk/<course_id>', methods=['POST'])
+    async def update_toggle_risk_route(course_id):
+        try:
+            # --- AUTHENTICATION REMOVED ---
+            # We process the request directly without checking headers or tokens
+            
+            data = await request.get_json()
+            print(f"Received data for toggle risk update: {data}")
+        
+            if not data or 'toggle_risk' not in data:
+                return jsonify({'error': 'Invalid request', 'message': 'toggle_risk field is required', 'statusCode': 400}), 400
+
+            result = await update_course_risk_toggle(course_id, data['toggle_risk'])
+        
+            print(f"Toggle risk update result: {result}")
+        
+            if result['status'] == 'Error':
+                return jsonify(result), 500
+        
+            return jsonify(result), 200
+        
+        except Exception as e:
+            print(f"Error in update toggle risk route: {str(e)}")
+            return jsonify({
+                'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500
+            }), 500
 
     @app.route('/get-student-profile', methods=['POST'])
     async def get_student_profile_route():

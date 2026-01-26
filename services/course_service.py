@@ -23,7 +23,7 @@ course_contexts_collection = db[Config.CONTEXTS_COLLECTION]
 students_collection = db[Config.STUDENTS_COLLECTION]
 quizzes_collection = db[Config.QUIZZES_COLLECTION]
 
-async def update_context(course_id, course_context):
+async def update_context(course_id, course_context,toggle_risk = True):
     """Updates or inserts the course context for a specific course."""
     try:
         result = await course_contexts_collection.update_one(
@@ -41,6 +41,42 @@ async def update_context(course_id, course_context):
     except Exception as e:
         logger.error("Error updating course context: %s", e)
         return {'status': 'Error', 'message': str(e)}
+    
+#haley
+async def update_course_risk_toggle(course_id,toggle_risk = True):
+    """ Updates toggle on risk analysis"""
+    try:
+        result = await course_contexts_collection.update_one(
+            {'course_id': course_id},
+            {
+                '$set': {
+                    'toggle_risk': toggle_risk,
+                }
+            },
+            upsert=True
+        )
+        status = 'Success' if result.modified_count > 0 or result.upserted_id else 'No changes made'
+        return {'status': status, 'message': 'Course context updated successfully' if status == 'Success' else 'No updates applied'}
+    except Exception as e:
+        logger.error("Error updating toggle risk: %s", e)
+        return {'status': 'Error', 'message': str(e)}
+    
+async def get_course_risk_toggle(course_id):
+    """Updates or inserts the course context for a specific course."""
+    try:
+        doc = await course_contexts_collection.find_one({'course_id': course_id})
+        
+        if not doc:
+            return {'toggle_risk': True, 'course_id': course_id}
+        
+        return {
+            'toggle_risk': doc.get('toggle_risk', True),
+            'course_id': course_id
+        }
+    except Exception as e:
+        logger.error("Error getting risk toggle: %s", e)
+        return {'status': 'Error', 'message': str(e)}
+ 
 
 async def get_incorrect_question_data(courseid, currentquiz, access_token, link):
     """Fetches incorrect answer data for a specific quiz."""
