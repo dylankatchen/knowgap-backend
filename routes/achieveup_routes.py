@@ -15,7 +15,8 @@ from services.achieveup_service import (
     analyze_questions,
     get_question_suggestions,
     get_all_skill_matrices_by_course,
-    get_assigned_skills  # Add new import
+    get_assigned_skills,
+    delete_skill_matrix  # Add new import
 )
 import logging
 
@@ -99,9 +100,10 @@ async def update_skill_matrix_route(matrix_id):
             }), 400
         
         skills = data.get('skills', [])
-        
+        matrix_name = data.get('matrix_name')
+
         # Call service
-        result = await update_skill_matrix(token, matrix_id, skills)
+        result = await update_skill_matrix(token, matrix_id, skills, matrix_name)
         
         if 'error' in result:
             return jsonify({
@@ -1507,5 +1509,41 @@ async def get_course_student_analytics_route(course_id):
             'error': 'Internal server error',
             'message': 'An unexpected error occurred',
             'statusCode': 500
+        }), 500         
+    
+@achieveup_bp.route('/achieveup/matrix/delete/<matrix_id>', methods=['DELETE'])
+async def delete_skill_matrix_route(matrix_id):
+    """Delete a skill matrix. (AchieveUp only)"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        # Call service
+        result = await delete_skill_matrix(token, matrix_id)
+
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
+
+        return jsonify({
+            'message': 'Skill matrix deleted successfully',
+            'matrix_id': matrix_id
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
         }), 500
- 

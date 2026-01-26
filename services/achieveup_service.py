@@ -77,7 +77,7 @@ async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skil
         logger.error(f"Create skill matrix error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
-async def update_skill_matrix(token: str, matrix_id: str, skills: list) -> dict:
+async def update_skill_matrix(token: str, matrix_id: str, skills: list, matrix_name: str) -> dict:
     """Update skill matrix."""
     try:
         # Verify user token
@@ -91,7 +91,9 @@ async def update_skill_matrix(token: str, matrix_id: str, skills: list) -> dict:
             {
                 '$set': {
                     'skills': skills,
+                    'matrix_name': matrix_name,
                     'updated_at': datetime.utcnow()
+
                 }
             }
         )
@@ -1536,4 +1538,37 @@ def generate_instructor_recommendations(complexity_dist: dict, avg_confidence: f
         })
     
     return recommendations
+
+async def delete_skill_matrix(token: str, matrix_id: str) -> dict:
+    """Delete a skill matrix by ID."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        if user['role'] != 'instructor' or user.get('canvasTokenType') != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        result = await achieveup_skill_matrices_collection.delete_one({
+            '_id': matrix_id
+        })
+
+        if result.deleted_count == 0:
+            return {
+                'error': 'Matrix not found',
+                'message': 'Skill matrix does not exist',
+                'statusCode': 404
+            }
+
+        return {'success': True}
+
+    except Exception as e:
+        logger.error(f"Delete skill matrix error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
  
