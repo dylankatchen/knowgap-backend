@@ -11,52 +11,19 @@ from datetime import datetime, timezone
 import traceback
 import json  # Add this at the top if not present
 import asyncio
-import ssl
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create SSL context based on environment
-def get_ssl_context():
-    """Get SSL context based on environment."""
-    if Config.ENV == 'development':
-        try:
-            # Try to use certifi certificates first for security
-            import certifi
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            return ssl_context
-        except Exception as e:
-            # Fallback to disabled verification only if certifi fails
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-            return ssl_context
-    else:
-        # Production: Use default SSL verification (secure)
-        return True  # aiohttp uses True for default SSL verification
-
-def create_canvas_session():
-    """Create aiohttp ClientSession with appropriate SSL settings."""
-    ssl_setting = get_ssl_context()
-    if ssl_setting is True:
-        # Production: use default SSL verification
-        return aiohttp.ClientSession()
-    else:
-        # Development: use custom SSL context
-        return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
-
 # MongoDB setup
-client = AsyncIOMotorClient(
-        Config.DB_CONNECTION_STRING,
-        tlsAllowInvalidCertificates=(Config.ENV == 'development')
-    )
+client = AsyncIOMotorClient(Config.DB_CONNECTION_STRING)
 db = client[Config.DATABASE]
 course_contexts_collection = db[Config.CONTEXTS_COLLECTION]
 students_collection = db[Config.STUDENTS_COLLECTION]
 quizzes_collection = db[Config.QUIZZES_COLLECTION]
 
-async def update_context(course_id, course_context):
+async def update_context(course_id, course_context,toggle_risk = True):
     """Updates or inserts the course context for a specific course."""
     try:
         result = await course_contexts_collection.update_one(
@@ -74,6 +41,42 @@ async def update_context(course_id, course_context):
     except Exception as e:
         logger.error("Error updating course context: %s", e)
         return {'status': 'Error', 'message': str(e)}
+    
+#haley
+async def update_course_risk_toggle(course_id,toggle_risk = True):
+    """ Updates toggle on risk analysis"""
+    try:
+        result = await course_contexts_collection.update_one(
+            {'course_id': course_id},
+            {
+                '$set': {
+                    'toggle_risk': toggle_risk,
+                }
+            },
+            upsert=True
+        )
+        status = 'Success' if result.modified_count > 0 or result.upserted_id else 'No changes made'
+        return {'status': status, 'message': 'Course context updated successfully' if status == 'Success' else 'No updates applied'}
+    except Exception as e:
+        logger.error("Error updating toggle risk: %s", e)
+        return {'status': 'Error', 'message': str(e)}
+    
+async def get_course_risk_toggle(course_id):
+    """Updates or inserts the course context for a specific course."""
+    try:
+        doc = await course_contexts_collection.find_one({'course_id': course_id})
+        
+        if not doc:
+            return {'toggle_risk': True, 'course_id': course_id}
+        
+        return {
+            'toggle_risk': doc.get('toggle_risk', True),
+            'course_id': course_id
+        }
+    except Exception as e:
+        logger.error("Error getting risk toggle: %s", e)
+        return {'status': 'Error', 'message': str(e)}
+ 
 
 async def get_incorrect_question_data(courseid, currentquiz, access_token, link):
     """Fetches incorrect answer data for a specific quiz."""
@@ -81,7 +84,7 @@ async def get_incorrect_question_data(courseid, currentquiz, access_token, link)
     headers = {'Authorization': f'Bearer {access_token}'}
     
     try:
-        async with create_canvas_session() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(api_url, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -173,7 +176,7 @@ async def update_student_quiz_data(course_id, access_token, link, student_id=Non
         url = f"https://{clean_link}/api/v1/courses/{course_id}/enrollments"
         headers = {'Authorization': f'Bearer {access_token}'}
         studentmap = {}
-        async with create_canvas_session() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     logger.error(f"Failed to fetch enrollments: {response.status}")
@@ -216,7 +219,7 @@ async def update_student_quiz_data(course_id, access_token, link, student_id=Non
                     if user_role == 'StudentEnrollment':
                         # logger.info(f"Fetching student submission for quiz {quiz_id}")
                         submission_url = f"https://{clean_link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/submissions"
-                        async with create_canvas_session() as session:
+                        async with aiohttp.ClientSession() as session:
                             async with session.get(submission_url, headers=headers) as sub_response:
                                 if sub_response.status != 200:
                                     logger.error(f"Failed to fetch student submission for quiz {quiz_id}: {sub_response.status}")
@@ -237,7 +240,7 @@ async def update_student_quiz_data(course_id, access_token, link, student_id=Non
                                     continue
                                 # Try to fetch questions, but handle 403 gracefully
                                 questions_url = f"https://{clean_link}/api/v1/courses/{course_id}/quizzes/{quiz_id}/questions"
-                                async with create_canvas_session() as session2:
+                                async with aiohttp.ClientSession() as session2:
                                     async with session2.get(questions_url, headers=headers) as q_response:
                                         if q_response.status != 200:
                                             error_text = await q_response.text()
@@ -449,7 +452,7 @@ async def update_quiz_reccs(course_id, quiz_id, access_token, link):
     # logger.info(f"Fetching quiz statistics for quiz {quiz_id} in course {course_id}")
 
     try:
-        async with create_canvas_session() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 response_text = await response.text()
                 # logger.info(f"Quiz statistics API response status: {response.status}")
@@ -533,7 +536,7 @@ async def get_student_grade(course_id, user_id, access_token, canvas_domain):
     logger.info(f"Calling Canvas enrollments API: {url}")
     logger.info(f"Headers: {headers}")
     try:
-        async with create_canvas_session() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 logger.info(f"Canvas API response status: {response.status}")
                 resp_text = await response.text()
@@ -570,7 +573,7 @@ async def get_student_profile(access_token, canvas_domain):
     url = f"https://{canvas_domain}/api/v1/users/self"
     headers = {'Authorization': f'Bearer {access_token}'}
     try:
-        async with create_canvas_session() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 resp_text = await response.text()
                 if response.status != 200:
