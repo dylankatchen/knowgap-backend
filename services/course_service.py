@@ -42,7 +42,7 @@ async def update_context(course_id, course_context,toggle_risk = True):
         logger.error("Error updating course context: %s", e)
         return {'status': 'Error', 'message': str(e)}
     
-#haley
+
 async def update_course_risk_toggle(course_id,toggle_risk = True):
     """ Updates toggle on risk analysis"""
     try:

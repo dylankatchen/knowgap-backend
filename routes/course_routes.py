@@ -181,9 +181,8 @@ def init_course_routes(app):
     @app.route('/update-toggle-risk/<course_id>', methods=['POST'])
     async def update_toggle_risk_route(course_id):
         try:
-            # --- AUTHENTICATION REMOVED ---
-            # We process the request directly without checking headers or tokens
 
+            #authentication
             auth_header = request.headers.get('Authorization')
             if not auth_header or not auth_header.startswith('Bearer '):
                 return jsonify({
@@ -213,12 +212,14 @@ def init_course_routes(app):
 
             print("Token validated - User is confirmed instructor")
 
+            #getting the new value of risk toggle that we want to update too
             data = await request.get_json()
             print(f"Received data for toggle risk update: {data}")
         
             if not data or 'toggle_risk' not in data:
                 return jsonify({'error': 'Invalid request', 'message': 'toggle_risk field is required', 'statusCode': 400}), 400
 
+            #updates risk toggle
             result = await update_course_risk_toggle(course_id, data['toggle_risk'])
         
             print(f"Toggle risk update result: {result}")
