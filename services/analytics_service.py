@@ -686,6 +686,11 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         # Use explicit collection names
         skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
         progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
+
+        # Fetch all quiz attempts for the course in one query
+        all_quiz_attempts = await db["AchieveUp_Quiz_Attempts"].find({
+            'course_id': course_id
+        }).to_list(length=None)
         
         # Get students for the course
         from services.achieveup_service import get_instructor_course_students
@@ -787,7 +792,8 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                     'skillsMastered': skills_mastered,
                     'badgesEarned': badges_earned,
                     'riskLevel': risk_level,
-                    'skillBreakdown': skill_breakdown
+                    'skillBreakdown': skill_breakdown,
+                    'totalQuestionsAttempted': rng.randint(5, 20)
                 }
                 student_analytics.append(analytics)
                 continue
@@ -818,7 +824,6 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                     }
                     
                     skill_scores[skill] = score
-                    total_questions_attempted += questions_attempted
                     total_questions_correct += questions_correct
                     
                     # Count skills mastered (score >= 80)
@@ -846,6 +851,14 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                         all_skill_scores[skill] = []
                     skill_distribution[skill] += 1
                     all_skill_scores[skill].append(0)
+
+            # Calculate unique questions attempted from quiz attempts
+            student_attempts = [a for a in all_quiz_attempts if a.get('student_id') == student_id]
+            unique_questions = set()
+            for attempt in student_attempts:
+                for question_id in attempt.get('question_responses', {}).keys():
+                    unique_questions.add(question_id)
+            total_questions_attempted = len(unique_questions)
             
             # Calculate overall progress
             overall_progress = round(sum(skill_scores.values()) / len(skill_scores), 1) if skill_scores else 0
@@ -873,7 +886,8 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                 'skillsMastered': skills_mastered,
                 'badgesEarned': badges_earned,
                 'riskLevel': risk_level,
-                'skillBreakdown': skill_breakdown
+                'skillBreakdown': skill_breakdown,
+                'totalQuestionsAttempted': total_questions_attempted
             }
             student_analytics.append(analytics)
         
