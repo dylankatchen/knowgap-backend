@@ -686,6 +686,11 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         # Use explicit collection names
         skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
         mastery_collection = db[Config.ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION]
+
+        # Fetch all quiz attempts for the course in one query
+        all_quiz_attempts = await db["AchieveUp_Quiz_Attempts"].find({
+            'course_id': course_id
+        }).to_list(length=None)
         
         # Get students for the course
         from services.achieveup_service import get_instructor_course_students

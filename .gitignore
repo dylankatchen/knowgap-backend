@@ -21,3 +21,8 @@ venv/
 env/
 *.pyc
 __pycache__/
+# Python cache
+*.py[cod]
+*$py.class
+*.so
+.Python
