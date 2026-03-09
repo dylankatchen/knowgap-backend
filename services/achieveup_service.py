@@ -1091,19 +1091,35 @@ async def get_instructor_student_analytics(token: str, course_id: str) -> dict:
         # Get skill matrix for course
         skill_matrix = await achieveup_skill_matrices_collection.find_one({'course_id': course_id})
         
-        # Get progress data for students
+        # Get mastery data for students
+        mastery_collection = db[Config.ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION] if hasattr(Config, 'ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION') else db['AchieveUp_Student_Skill_Mastery']
+        
         student_analytics = []
         for student in students:
             student_id = student.get('id')
-            progress_data = await achieveup_progress_collection.find({'student_id': student_id, 'course_id': course_id}).to_list(length=None)
+            # Fetch all skills mastery for this student
+            mastery_records = await db[Config.ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION].find({
+                'student_id': student_id, 
+                'course_id': course_id
+            }).to_list(length=None)
             
+            if mastery_records:
+                avg_mastery = sum([m.get('mastery_percentage', 0) for m in mastery_records]) / len(mastery_records)
+                skills_completed = len([m for m in mastery_records if m.get('mastery_percentage', 0) >= 80])
+                last_activity = max([m.get('last_updated', datetime.min) for m in mastery_records] + [datetime.min])
+            else:
+                avg_mastery = 0
+                skills_completed = 0
+                last_activity = datetime.min
+
             analytics = {
                 'studentId': student_id,
                 'studentName': student.get('name', 'Unknown'),
                 'email': student.get('email', ''),
-                'progressCount': len(progress_data),
-                'skillsCompleted': len([p for p in progress_data if p.get('completed', False)]),
-                'lastActivity': max([p.get('updated_at', datetime.min) for p in progress_data] + [datetime.min])
+                'progressCount': len(mastery_records),
+                'overallMastery': round(avg_mastery, 2),
+                'skillsCompleted': skills_completed,
+                'lastActivity': last_activity.isoformat() if last_activity != datetime.min else None
             }
             student_analytics.append(analytics)
         
@@ -1179,7 +1195,7 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         """
         
         response = await client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are an expert curriculum designer. Return only valid JSON."},
                 {"role": "user", "content": prompt}

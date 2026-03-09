@@ -787,6 +787,69 @@ async def instructor_course_analytics_route(course_id):
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
 
+@achieveup_bp.route('/achieveup/instructor/course/<course_id>/force-sync', methods=['POST'])
+async def instructor_force_sync_route(course_id):
+    """Force a data sync for a specific course (instructor only).
+    Triggers Canvas submission fetch → mastery update → progress update immediately."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        # Verify instructor
+        from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return jsonify(user_result), user_result.get('statusCode', 401)
+
+        user = user_result['user']
+        if user.get('role') != 'instructor' or user.get('canvasTokenType') != 'instructor':
+            return jsonify({
+                'error': 'Forbidden',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }), 403
+
+        # Get the instructor's Canvas token
+        canvas_token = await get_user_canvas_token(user['id'])
+        if not canvas_token:
+            return jsonify({
+                'error': 'Canvas token not found',
+                'message': 'Please connect your Canvas account in Settings',
+                'statusCode': 400
+            }), 400
+
+        # Run the sync
+        from services.canvas_submissions_service import sync_course_submissions_direct
+        result = await sync_course_submissions_direct(canvas_token, course_id)
+
+        if 'error' in result:
+            return jsonify(result), result.get('statusCode', 500)
+
+        return jsonify({
+            'message': f'Sync completed for course {course_id}',
+            'details': {
+                'total_quizzes': result.get('total_quizzes', 0),
+                'total_synced': result.get('total_synced', 0),
+                'progress_synced': result.get('progress_synced', 0),
+                'total_errors': result.get('total_errors', 0)
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Force sync error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred during sync',
+            'statusCode': 500
+        }), 500
+
 @achieveup_bp.route('/achieveup/questions/analyze', methods=['POST'])
 async def analyze_questions_route():
     """Analyze question complexity and suggest skills. (AchieveUp only)"""

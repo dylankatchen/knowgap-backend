@@ -92,8 +92,8 @@ async def generate_ai_skill_suggestions(course_data: Dict[str, Any]) -> List[Dic
 
         client=AsyncOpenAI(api_key=OPENAI_API_KEY)
         response = await client.chat.completions.create(
-            model="gpt-5-mini",
-            message=[
+            model="gpt-4o-mini",
+            messages=[
                 {"role": "system", "content": "You are an expert curriculum designer who creates specific, measurable learning outcomes."},
                 {"role": "user", "content": prompt}
             ],
@@ -183,46 +183,61 @@ def generate_fallback_skills(course_data: Dict[str, Any]) -> List[Dict[str, Any]
 
 async def analyze_questions(questions_data: List[Dict[str, Any]], course_skills: List[str] = None) -> List[Dict[str, Any]]:
     """
-    Analyze questions for complexity and skill mapping.
-    
-    Args:
-        questions_data: List of question objects with id, text, type, points
-        course_skills: Available skills for the course
-    
-    Returns:
-        List of question analysis results
+    Analyze questions for complexity and skill mapping using batching for efficiency.
     """
+    if not course_skills:
+        course_skills = GENERIC_SKILLS
+        
     results = []
     
-    for question in questions_data:
-        try:
-            # Analyze complexity
-            complexity = analyze_question_complexity(question)
+    # 1. Initial pass: Calculate complexity and identify questions needing AI
+    needs_ai = []
+    for i, question in enumerate(questions_data):
+        complexity = analyze_question_complexity(question)
+        question_text = question.get('question_text', '') or question.get('text', '')
+        
+        # Start with keyword matching
+        suggested_skills = classify_question_skills_keywords(question_text, course_skills)
+        
+        # If keywords didn't find clear matches, queue for AI
+        if not suggested_skills or len(suggested_skills) == 0:
+            needs_ai.append(i)
             
-            # Map to skills
-            suggested_skills = await map_question_to_skills(question, course_skills)
+        results.append({
+            'questionId': question.get('id'),
+            'complexity': complexity,
+            'suggestedSkills': suggested_skills,
+            'confidence': 0.5, # Default confidence for keyword matching
+            'analysis_timestamp': datetime.utcnow().isoformat()
+        })
+
+    # 2. Batch AI processing (if enabled and needed)
+    if OPENAI_API_KEY and needs_ai:
+        batch_size = 20
+        for i in range(0, len(needs_ai), batch_size):
+            chunk_indices = needs_ai[i : i + batch_size]
+            chunk_texts = [
+                (questions_data[idx].get('question_text', '') or questions_data[idx].get('text', ''))
+                for idx in chunk_indices
+            ]
             
-            # Calculate confidence
-            confidence = calculate_confidence_score(question, suggested_skills)
+            logger.info(f"Processing AI batch for {len(chunk_texts)} questions...")
+            batch_results = await classify_questions_batch_ai(chunk_texts, course_skills)
             
-            results.append({
-                'questionId': question.get('id'),
-                'complexity': complexity,
-                'suggestedSkills': suggested_skills,
-                'confidence': confidence,
-                'analysis_timestamp': datetime.utcnow().isoformat()
-            })
-            
-        except Exception as e:
-            logger.error(f"Question analysis error for question {question.get('id')}: {str(e)}")
-            results.append({
-                'questionId': question.get('id'),
-                'complexity': 'medium',
-                'suggestedSkills': [],
-                'confidence': 0.5,
-                'error': str(e)
-            })
-    
+            if batch_results:
+                for j, idx in enumerate(chunk_indices):
+                    # batch_results is expected to be a dict or list mapping index to skills
+                    ai_skills = batch_results.get(str(j)) or batch_results.get(j)
+                    if ai_skills:
+                        results[idx]['suggestedSkills'] = ai_skills
+                        results[idx]['confidence'] = 0.85 # Higher confidence for AI
+
+    # 3. Final safety net for any still missing skills
+    for i, res in enumerate(results):
+        if not res['suggestedSkills'] and course_skills:
+            res['suggestedSkills'] = get_fallback_skill_suggestion(questions_data[i], course_skills)
+            res['confidence'] = calculate_confidence_score(questions_data[i], res['suggestedSkills'])
+
     return results
 
 def analyze_question_complexity(question: Dict[str, Any]) -> str:
@@ -351,16 +366,15 @@ async def classify_question_skills_ai(question_text: str, available_skills: List
         client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
         response = await client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are an expert at mapping educational content to learning skills."},
                 {"role": "user", "content": prompt}
             ],
             #temperature=0.1,
-            max_completion_tokens=10000
+            max_completion_tokens=1000
         )
 
-        
         content = response.choices[0].message.content.strip()
         
         # Extract JSON array
@@ -377,6 +391,57 @@ async def classify_question_skills_ai(question_text: str, available_skills: List
     except Exception as e:
         logger.error(f"AI skill classification error: {str(e)}")
         return None
+
+async def classify_questions_batch_ai(question_texts: List[str], available_skills: List[str]) -> Dict[str, List[str]]:
+    """Use OpenAI to classify multiple questions at once for efficiency."""
+    if not OPENAI_API_KEY or not question_texts:
+        return {}
+    
+    try:
+        # Prepare numbered list of questions
+        questions_formatted = "\n".join([f"{i}. {text[:500]}" for i, text in enumerate(question_texts)])
+        
+        prompt = f"""
+        Map each of the following {len(question_texts)} questions to 1-3 most relevant skills from the provided list.
+        
+        Available Skills: {', '.join(available_skills)}
+        
+        Questions:
+        {questions_formatted}
+        
+        Return ONLY a valid JSON object where the keys are the question numbers (as strings "0", "1", etc.) and values are arrays of skill names.
+        Example:
+        {{
+            "0": ["Skill A", "Skill B"],
+            "1": ["Skill C"]
+        }}
+        """
+
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert at mapping educational content to learning skills. Output only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+
+        content = response.choices[0].message.content.strip()
+        batch_results = json.loads(content)
+        
+        # Clean and validate
+        cleaned_results = {}
+        for key, skills in batch_results.items():
+            if isinstance(skills, list):
+                valid_skills = [s for s in skills if s in available_skills]
+                cleaned_results[key] = valid_skills[:3]
+        
+        return cleaned_results
+
+    except Exception as e:
+        logger.error(f"Batch AI skill classification error: {str(e)}")
+        return {}
 
 def get_fallback_skill_suggestion(question: Dict[str, Any], available_skills: List[str]) -> List[str]:
     """Provide intelligent fallback skill suggestion when other methods fail."""

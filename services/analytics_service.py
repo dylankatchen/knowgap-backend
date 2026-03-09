@@ -685,7 +685,7 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         
         # Use explicit collection names
         skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
-        progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
+        mastery_collection = db[Config.ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION]
         
         # Get students for the course
         from services.achieveup_service import get_instructor_course_students
@@ -695,12 +695,34 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         
         students = students_result if isinstance(students_result, list) else []
         
-        # Get skill matrix for course
-        skill_matrix = await skill_matrices_collection.find_one({'course_id': course_id})
-        course_skills = skill_matrix.get('skills', []) if skill_matrix else []
+        # Get all mapped skills for course from AchieveUp_Question_Skills
+        question_skills_cursor = db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLECTION].find({'course_id': course_id})
+        course_skills_set = set()
+        async for qs in question_skills_cursor:
+            for skill in qs.get('skills', []):
+                if isinstance(skill, dict):
+                    course_skills_set.add(skill.get('name', ''))
+                else:
+                    course_skills_set.add(skill)
+        
+        course_skills = list(course_skills_set)
+        
+        # Also check for skills that might exist in mastery collection but not question mappings (legacy data)
+        mastery_skills_cursor = mastery_collection.distinct('skill_id', {'course_id': course_id})
+        for skill in await mastery_skills_cursor:
+            if skill not in course_skills:
+                course_skills.append(skill)
+        
+        # Determine if we should ever use demo data. Only use if absolutely no real assignments or mastery exist
+        use_demo_data = False
+        if Config.ENABLE_DEMO_MODE:
+            course_mastery_count = await mastery_collection.count_documents({'course_id': course_id})
+            course_assignment_count = await db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLECTION].count_documents({'course_id': course_id})
+            if course_mastery_count == 0 and course_assignment_count == 0:
+                use_demo_data = True
         
         # Fallback: Define skills for each course if not found in database (only if demo mode enabled)
-        if not course_skills and Config.ENABLE_DEMO_MODE:
+        if not course_skills and use_demo_data:
             course_skills_map = {
                 "demo_001": ["HTML/CSS Fundamentals", "JavaScript Programming", "DOM Manipulation", "Responsive Design", "Web APIs"],
                 "demo_002": ["SQL Fundamentals", "Database Design", "Data Normalization", "Query Optimization", "Stored Procedures"],
@@ -712,18 +734,21 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
         skill_distribution = {}
         all_skill_scores = {}
         
+        # Debug info tracking
+        real_data_count = 0
+        data_source = "demo" if use_demo_data else "real"
+        
         for i, student in enumerate(students):
             student_id = student.get('id')
-            print(student, 'student')
             
-            # Get all progress data for this student
-            progress_data = await progress_collection.find({
+            # Get all mastery data for this student in this course
+            mastery_data = await mastery_collection.find({
                 'student_id': student_id,
                 'course_id': course_id
             }).to_list(length=None)
             
-            # If no progress data found, generate realistic demo data (only if demo mode enabled)
-            if (not progress_data or len(progress_data) == 0) and Config.ENABLE_DEMO_MODE:
+            # If no real data and demo mode is on (and we are using demo data for the course), generate demo data
+            if not mastery_data and use_demo_data:
                 # Use student ID as seed for consistent random data
                 seed_value = hash(student_id) % (2**32)
                 rng = random.Random(seed_value)
@@ -735,11 +760,9 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                 skills_mastered = 0
                 
                 for skill in course_skills:
-                    # Generate realistic score with some variation (using seeded random)
                     score = base_performance * 100 + rng.uniform(-20, 30)
-                    score = max(15, min(100, score))  # Clamp between 15-100
+                    score = max(15, min(100, score))
                     
-                    # Determine level
                     if score >= 80:
                         level = "advanced"
                         skills_mastered += 1
@@ -748,7 +771,6 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                     else:
                         level = "beginner"
                     
-                    # Generate realistic question counts (using seeded random)
                     questions_attempted = rng.randint(2, 8)
                     questions_correct = max(0, int(questions_attempted * (score / 100) + rng.uniform(-1, 1)))
                     questions_correct = min(questions_attempted, questions_correct)
@@ -759,28 +781,21 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                         "questionsAttempted": questions_attempted,
                         "questionsCorrect": questions_correct
                     }
-                    
                     skill_scores[skill] = score
                     
-                    # Track distribution
                     if skill not in skill_distribution:
                         skill_distribution[skill] = 0
                         all_skill_scores[skill] = []
                     skill_distribution[skill] += 1
                     all_skill_scores[skill].append(score)
                 
-                # Calculate overall metrics
                 overall_progress = round(sum(skill_scores.values()) / len(skill_scores), 1) if skill_scores else 0
-                badges_earned = skills_mastered + (len([s for s in skill_breakdown.values() if s["level"] == "intermediate"]))
+                # A single badge is earned only at advanced level (80% or higher)
+                badges_earned = skills_mastered
                 
-                if overall_progress >= 75:
-                    risk_level = 'low'
-                elif overall_progress >= 50:
-                    risk_level = 'medium'
-                else:
-                    risk_level = 'high'
+                risk_level = 'low' if overall_progress >= 75 else 'medium' if overall_progress >= 50 else 'high'
                 
-                analytics = {
+                student_analytics.append({
                     'id': student_id,
                     'name': student.get('name', 'Unknown'),
                     'progress': overall_progress,
@@ -788,85 +803,77 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                     'badgesEarned': badges_earned,
                     'riskLevel': risk_level,
                     'skillBreakdown': skill_breakdown
-                }
-                student_analytics.append(analytics)
+                })
                 continue
             
-            # Process actual progress data from database
+            # Process real mastery data
+            if mastery_data:
+                real_data_count += len(mastery_data)
+                data_source = "real"
+
             skill_breakdown = {}
             skill_scores = {}
-            total_questions_attempted = 0
-            total_questions_correct = 0
             skills_mastered = 0
             
+            # Create a lookup for mastery documents by skill_id
+            mastery_lookup = {doc.get('skill_id'): doc for doc in mastery_data}
+            
             for skill in course_skills:
-                skill_progress = [p for p in progress_data if p.get('skill') == skill]
-                if skill_progress:
-                    # Get the latest progress for this skill
-                    latest_progress = max(skill_progress, key=lambda x: x.get('updated_at', datetime.min))
+                # Skill names might be objects or strings in some matrices
+                # In the new system, they are objects: {"id": "...", "name": "...", "description": "..."}
+                skill_id = skill.get('id') if isinstance(skill, dict) else skill
+                skill_name = skill.get('name') if isinstance(skill, dict) else skill
+                
+                doc = mastery_lookup.get(skill_id)
+                
+                if doc:
+                    score = doc.get('mastery_percentage', 0)
+                    questions_attempted = doc.get('total_attempted', 0)
+                    questions_correct = doc.get('total_correct', 0)
                     
-                    score = latest_progress.get('score', 0)
-                    level = latest_progress.get('level', 'beginner')
-                    questions_attempted = latest_progress.get('questions_attempted', 0)
-                    questions_correct = latest_progress.get('questions_correct', 0)
+                    if score >= 80:
+                        level = "advanced"
+                        skills_mastered += 1
+                    elif score >= 60:
+                        level = "intermediate"
+                    else:
+                        level = "beginner"
                     
-                    skill_breakdown[skill] = {
+                    skill_breakdown[skill_name] = {
                         "score": round(score, 1),
                         "level": level,
                         "questionsAttempted": questions_attempted,
                         "questionsCorrect": questions_correct
                     }
+                    skill_scores[skill_name] = score
                     
-                    skill_scores[skill] = score
-                    total_questions_attempted += questions_attempted
-                    total_questions_correct += questions_correct
-                    
-                    # Count skills mastered (score >= 80)
-                    if score >= 80:
-                        skills_mastered += 1
-                    
-                    # Track skill distribution
-                    if skill not in skill_distribution:
-                        skill_distribution[skill] = 0
-                        all_skill_scores[skill] = []
-                    skill_distribution[skill] += 1
-                    all_skill_scores[skill].append(score)
+                    if skill_name not in skill_distribution:
+                        skill_distribution[skill_name] = 0
+                        all_skill_scores[skill_name] = []
+                    skill_distribution[skill_name] += 1
+                    all_skill_scores[skill_name].append(score)
                 else:
-                    skill_breakdown[skill] = {
+                    skill_breakdown[skill_name] = {
                         "score": 0,
-                        "level": "beginner", 
+                        "level": "beginner",
                         "questionsAttempted": 0,
                         "questionsCorrect": 0
                     }
-                    skill_scores[skill] = 0
+                    skill_scores[skill_name] = 0
                     
-                    # Still track for distribution
-                    if skill not in skill_distribution:
-                        skill_distribution[skill] = 0
-                        all_skill_scores[skill] = []
-                    skill_distribution[skill] += 1
-                    all_skill_scores[skill].append(0)
+                    if skill_name not in skill_distribution:
+                        skill_distribution[skill_name] = 0
+                        all_skill_scores[skill_name] = []
+                    skill_distribution[skill_name] += 1
+                    all_skill_scores[skill_name].append(0)
             
-            # Calculate overall progress
             overall_progress = round(sum(skill_scores.values()) / len(skill_scores), 1) if skill_scores else 0
+            risk_level = 'low' if overall_progress >= 75 else 'medium' if overall_progress >= 50 else 'high'
             
-            # Calculate risk level
-            if overall_progress >= 75:
-                risk_level = 'low'
-            elif overall_progress >= 50:
-                risk_level = 'medium'
-            else:
-                risk_level = 'high'
+            # A single badge is earned only at advanced level (80% or higher)
+            badges_earned = skills_mastered
             
-            # Calculate badges (simple logic: 1 badge per skill at intermediate, 2 per advanced)
-            badges_earned = 0
-            for skill_data in skill_breakdown.values():
-                if skill_data["level"] == "intermediate":
-                    badges_earned += 1
-                elif skill_data["level"] == "advanced":
-                    badges_earned += 2
-            
-            analytics = {
+            student_analytics.append({
                 'id': student_id,
                 'name': student.get('name', 'Unknown'),
                 'progress': overall_progress,
@@ -874,27 +881,47 @@ async def get_course_students_analytics(token: str, course_id: str, time_range: 
                 'badgesEarned': badges_earned,
                 'riskLevel': risk_level,
                 'skillBreakdown': skill_breakdown
-            }
-            student_analytics.append(analytics)
+            })
         
         # Calculate average scores for each skill
-        average_scores = {}
-        for skill, scores in all_skill_scores.items():
-            if scores:
-                average_scores[skill] = round(sum(scores) / len(scores), 1)
-            else:
-                average_scores[skill] = 0
+        average_scores = {s: round(sum(v)/len(v), 1) if v else 0 for s, v in all_skill_scores.items()}
         
-        # Format response according to frontend requirements
+        # Calculate assignment stats
+        real_assignment_count = 0
+        try:
+            # Count assignments directly for this course in the new collection
+            real_assignment_count = await db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLECTION].count_documents({
+                'course_id': course_id
+            })
+            
+            # Fallback to check old collection if no assignments found
+            if real_assignment_count == 0:
+                matrices = await db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION].find({'course_id': course_id}).to_list(length=None)
+                matrix_ids = [m.get('matrix_id') for m in matrices if m.get('matrix_id')]
+                
+                if matrix_ids:
+                    real_assignment_count = await db[Config.ACHIEVEUP_SKILL_ASSIGNMENTS_COLLECTION].count_documents({
+                        'matrix_id': {'$in': matrix_ids}
+                    })
+        except Exception as e:
+            logger.error(f"Error counting assignments for debug: {str(e)}")
+
         response = {
             'analytics': {
                 'students': student_analytics,
                 'skillDistribution': skill_distribution,
-                'averageScores': average_scores
+                'averageScores': average_scores,
+                'debug': {
+                    'dataSource': data_source,
+                    'realRecordCount': real_data_count,
+                    'realAssignmentCount': real_assignment_count,
+                    'demoModeEnabled': Config.ENABLE_DEMO_MODE,
+                    'queryCourseId': course_id,
+                    'serverTime': datetime.utcnow().isoformat()
+                }
             }
         }
         
-        # Close database connection
         client.close()
         
         return response

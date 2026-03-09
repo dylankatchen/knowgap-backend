@@ -9,6 +9,7 @@ Provides real student performance data for badge generation and analytics.
 """
 
 import aiohttp
+import asyncio
 import ssl
 import logging
 from datetime import datetime
@@ -28,6 +29,25 @@ client = AsyncIOMotorClient(
 )
 db = client[Config.DATABASE]
 submissions_collection = db.get_collection('AchieveUp_Quiz_Submissions')
+
+async def check_rate_limit(response):
+    """
+    Check Canvas rate limit headers and pause if running low.
+    Canvas returns X-Rate-Limit-Remaining to indicate budget left.
+    """
+    remaining = response.headers.get('X-Rate-Limit-Remaining')
+    if remaining is not None:
+        try:
+            remaining_val = float(remaining)
+            if remaining_val < 50:
+                wait_time = max(5, int(60 - remaining_val))
+                logger.warning(f"Canvas rate limit low ({remaining_val} remaining). Pausing {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            elif remaining_val < 100:
+                # Light throttle when getting close
+                await asyncio.sleep(1)
+        except (ValueError, TypeError):
+            pass
 
 async def get_student_quiz_submission(canvas_token: str, course_id: str, quiz_id: str, student_id: str) -> dict:
     """
@@ -145,6 +165,9 @@ async def get_all_course_submissions(canvas_token: str, course_id: str, quiz_id:
                     data = await response.json()
                     submissions = data.get('quiz_submissions', [])
                     all_submissions.extend(submissions)
+                    
+                    # Check rate limit headers before continuing
+                    await check_rate_limit(response)
                     
                     # Check for next page
                     link_header = response.headers.get('Link', '')
@@ -395,6 +418,18 @@ async def sync_course_submissions(token: str, course_id: str) -> dict:
                 'statusCode': 400
             }
         
+        return await sync_course_submissions_direct(canvas_token, course_id)
+        
+    except Exception as e:
+        logger.error(f"Sync course submissions error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def sync_course_submissions_direct(canvas_token: str, course_id: str) -> dict:
+    """
+    Sync all submissions for a course using a raw Canvas token.
+    Intended for background tasks (app.py) or internal calls.
+    """
+    try:
         # Get all quizzes in the course
         from services.achieveup_canvas_service import get_instructor_course_quizzes
         quizzes_result = await get_instructor_course_quizzes(canvas_token, course_id)
@@ -410,36 +445,137 @@ async def sync_course_submissions(token: str, course_id: str) -> dict:
         # Sync submissions for each quiz
         for quiz in quizzes:
             quiz_id = quiz.get('id')
+            quiz_title = quiz.get('title', 'Unknown')
             
             # Get all submissions for this quiz
             submissions_result = await get_all_course_submissions(canvas_token, course_id, quiz_id)
             
             if 'error' in submissions_result:
                 total_errors += 1
-                logger.error(f"Failed to sync quiz {quiz_id}: {submissions_result.get('error')}")
+                logger.error(f"Failed to sync quiz {quiz_id} ({quiz_title}): {submissions_result.get('error')}")
                 continue
             
             submissions = submissions_result.get('submissions', [])
             
             # Process and store each submission
-            for submission in submissions:
-                processed = await process_submission_data(submission)
-                if processed:
+            from services.mastery_service import update_student_mastery, mastery_collection
+            
+            # Clear previous mastery data for this course to prevent $inc duplication 
+            # upon every sync interval (since we aggregate across all time)
+            if quiz == quizzes[0]: # Only do this once per course sync
+                await mastery_collection.delete_many({'course_id': str(course_id)})
+            
+            async with create_canvas_session() as session:
+                for submission in submissions:
+                    student_id = submission.get('user_id', 'unknown')
+                    has_questions_before = 'questions' in submission
+                    
+                    # Fetch detailed submission data with questions if missing
+                    if 'questions' not in submission:
+                        submission_id = submission.get('id')
+                        if submission_id:
+                            questions_url = f"{CANVAS_API_URL}/quiz_submissions/{submission_id}/questions"
+                            headers = {'Authorization': f'Bearer {canvas_token}'}
+                            async with session.get(questions_url, headers=headers) as q_response:
+                                # Check rate limit before processing
+                                await check_rate_limit(q_response)
+                                if q_response.status == 200:
+                                    questions_data = await q_response.json()
+                                    submission['questions'] = questions_data.get('quiz_submission_questions', [])
+                                else:
+                                    logger.warning(f"Could not fetch questions for submission {submission_id} (student {student_id}): status {q_response.status}")
+                    
+                    num_questions = len(submission.get('questions', []))
+                    
+                    processed = await process_submission_data(submission)
+                    if processed:
+                        # Always include course_id for mastery trailing
+                        processed['course_id'] = str(course_id)
+                        
+                        # Always update mastery tracking (aggregated data)
+                        await update_student_mastery(processed)
+                    
+                    # Optionally store raw submission based on cache settings
                     success = await store_submission_data(course_id, processed)
                     if success:
                         total_synced += 1
                     else:
-                        total_errors += 1
+                        # Mastery updated even if cache disabled
+                        pass
         
+        # Check how many mastery docs exist after sync
+        mastery_count = await mastery_collection.count_documents({'course_id': str(course_id)})
+        
+        # === Sync Progress collection from freshly-updated Mastery data ===
+        # This ensures student charts/graphs reflect the latest skill assignments.
+        # No extra Canvas API calls — we just read what mastery_service already wrote.
+        progress_synced = 0
+        try:
+            progress_collection = db.get_collection('AchieveUp_Progress')
+
+            # Read all mastery docs for this course (just written above)
+            mastery_docs = await mastery_collection.find(
+                {'course_id': str(course_id)}
+            ).to_list(length=None)
+
+            # Group by student_id
+            student_mastery = {}
+            for doc in mastery_docs:
+                sid = doc.get('student_id')
+                if not sid:
+                    continue
+                if sid not in student_mastery:
+                    student_mastery[sid] = {}
+
+                skill_id = doc.get('skill_id', 'Unknown')
+                total_correct = doc.get('total_correct', 0)
+                total_attempted = doc.get('total_attempted', 0)
+                percentage = doc.get('mastery_percentage', 0)
+
+                if percentage >= 80:
+                    level = 'advanced'
+                elif percentage >= 60:
+                    level = 'intermediate'
+                else:
+                    level = 'beginner'
+
+                student_mastery[sid][skill_id] = {
+                    'score': round(percentage, 1),
+                    'level': level,
+                    'total_questions': total_attempted,
+                    'correct_answers': total_correct,
+                    'notes': ''
+                }
+
+            # Upsert one Progress document per student (overwrites, no bloat)
+            for sid, skill_progress in student_mastery.items():
+                await progress_collection.update_one(
+                    {'student_id': sid, 'course_id': str(course_id)},
+                    {'$set': {
+                        'student_id': sid,
+                        'course_id': str(course_id),
+                        'skill_progress': skill_progress,
+                        'last_updated': datetime.utcnow()
+                    }},
+                    upsert=True
+                )
+                progress_synced += 1
+
+            logger.info(f"Progress collection updated for {progress_synced} students in course {course_id}")
+        except Exception as progress_error:
+            logger.error(f"Error updating Progress collection: {str(progress_error)}")
+
         return {
-            'message': 'Sync completed',
+            'message': 'Sync completed (Direct)',
             'course_id': course_id,
             'total_quizzes': len(quizzes),
             'total_synced': total_synced,
             'total_errors': total_errors,
+            'progress_synced': progress_synced,
             'synced_at': datetime.utcnow()
         }
         
     except Exception as e:
-        logger.error(f"Sync course submissions error: {str(e)}")
+        logger.error(f"Sync course submissions direct error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
+

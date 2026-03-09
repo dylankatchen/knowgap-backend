@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from utils.encryption_utils import decrypt_token
 
+from services.canvas_submissions_service import sync_course_submissions_direct
 from services.course_service import update_student_quiz_data, update_quiz_questions_per_course
 from services.video_service import update_course_videos
 
@@ -131,12 +132,13 @@ async def scheduled_update():
         await db.command('ping')
         logger.info("MongoDB connection successful")
         
+        # 1. Process Legacy Tokens
         async for token in token_collection.find():
             course_ids = token.get('course_ids')
             authkey = Config.DB_CONNECTION_STRING
             access_token = decrypt_token(encryption_key, token.get('auth'))
-            link = token.get('link').replace("https://", "").replace("http://", "")
-            logger.info("Processing token with link: %s", link)
+            link = token.get('link', '').replace("https://", "").replace("http://", "")
+            logger.info("Processing legacy token with link: %s", link)
 
             if all([course_ids, access_token, authkey, link]):
                 for course_id in course_ids:
@@ -144,11 +146,62 @@ async def scheduled_update():
                         await update_student_quiz_data(course_id, access_token, link)
                         await update_quiz_questions_per_course(course_id, access_token, link)
                         await update_course_videos(course_id)
+                        
+                        # New: Update student mastery tracking (efficient sync)
+                        await sync_course_submissions_direct(access_token, course_id)
+                        
                         logger.info("Processed course ID: %s", course_id)
                     except Exception as course_error:
                         logger.error("Error processing course ID %s: %s", course_id, course_error)
+                    
+                    # Rate limit safeguard: pause between courses
+                    await asyncio.sleep(1)
             else:
                 logger.warning("Missing data for token processing: %s", token)
+            
+            # Rate limit safeguard: pause between legacy tokens
+            await asyncio.sleep(2)
+                
+        # 2. Process AchieveUp Users (Instructors with Canvas Tokens)
+        achieveup_users = db[Config.ACHIEVEUP_USERS_COLLECTION]
+        link = "canvas.instructure.com" # Default link for AchieveUp users
+        
+        async for user in achieveup_users.find({"role": "instructor", "canvas_api_token": {"$exists": True, "$ne": None}}):
+            try:
+                # Decrypt token
+                access_token = decrypt_token(encryption_key, user.get('canvas_api_token'))
+                if not access_token:
+                    continue
+                    
+                # Fetch courses for this user (we don't store course_ids in user doc, need to fetch)
+                from services.achieveup_canvas_service import get_instructor_courses
+                courses = await get_instructor_courses(access_token)
+                
+                if isinstance(courses, list):
+                    for course in courses:
+                        course_id = str(course.get('id'))
+                        logger.info("Processing AchieveUp course ID: %s for user %s", course_id, user.get('email'))
+                        
+                        try:
+                            # Sync data
+                            await update_student_quiz_data(course_id, access_token, link)
+                            await update_quiz_questions_per_course(course_id, access_token, link)
+                            await update_course_videos(course_id)
+                            
+                            # Update mastery
+                            await sync_course_submissions_direct(access_token, course_id)
+                            
+                        except Exception as course_error:
+                            logger.error("Error processing course ID %s: %s", course_id, course_error)
+                        
+                        # Rate limit safeguard: pause between courses
+                        await asyncio.sleep(1)
+            except Exception as user_error:
+                logger.error("Error processing user %s: %s", user.get('email'), user_error)
+            
+            # Rate limit safeguard: pause between teachers
+            await asyncio.sleep(2)
+
     except Exception as e:
         logger.error("Error in scheduled update: %s", str(e))
         logger.error("Full error details:", exc_info=True)
