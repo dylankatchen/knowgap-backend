@@ -10,6 +10,7 @@ def init_base_routes(app):
         if request.method == 'OPTIONS':
             response = Response()
             response.headers.add('Access-Control-Allow-Origin', 'https://canvas.instructure.com')
+            response.headers.add('Access-Control-Allow-Origin', 'https://webcourses.ucf.edu')
             response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
             response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
             return response
