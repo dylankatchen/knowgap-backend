@@ -827,22 +827,21 @@ async def instructor_force_sync_route(course_id):
                 'statusCode': 400
             }), 400
 
-        # Run the sync
-        from services.canvas_submissions_service import sync_course_submissions_direct
-        result = await sync_course_submissions_direct(canvas_token, course_id)
-
-        if 'error' in result:
-            return jsonify(result), result.get('statusCode', 500)
+        # Run the sync in the background to avoid Heroku/Netlify timeouts
+        # The frontend will be notified that sync has started
+        asyncio.create_task(sync_course_submissions_direct(canvas_token, course_id))
 
         return jsonify({
-            'message': f'Sync completed for course {course_id}',
+            'message': f'Sync started in background for course {course_id}. This may take a minute.',
+            'status': 'processing',
             'details': {
-                'total_quizzes': result.get('total_quizzes', 0),
-                'total_synced': result.get('total_synced', 0),
-                'progress_synced': result.get('progress_synced', 0),
-                'total_errors': result.get('total_errors', 0)
+                'total_quizzes': 0,
+                'total_synced': 0,
+                'progress_synced': 0,
+                'total_errors': 0,
+                'is_background': True
             }
-        }), 200
+        }), 202
 
     except Exception as e:
         logger.error(f"Force sync error: {str(e)}")

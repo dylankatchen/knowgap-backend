@@ -442,66 +442,67 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str) -> d
         total_synced = 0
         total_errors = 0
         
-        # Sync submissions for each quiz
-        for quiz in quizzes:
-            quiz_id = quiz.get('id')
-            quiz_title = quiz.get('title', 'Unknown')
-            
-            # Get all submissions for this quiz
-            submissions_result = await get_all_course_submissions(canvas_token, course_id, quiz_id)
-            
-            if 'error' in submissions_result:
-                total_errors += 1
-                logger.error(f"Failed to sync quiz {quiz_id} ({quiz_title}): {submissions_result.get('error')}")
-                continue
-            
-            submissions = submissions_result.get('submissions', [])
-            
-            # Process and store each submission
-            from services.mastery_service import update_student_mastery, mastery_collection
-            
-            # Clear previous mastery data for this course to prevent $inc duplication 
-            # upon every sync interval (since we aggregate across all time)
-            if quiz == quizzes[0]: # Only do this once per course sync
-                await mastery_collection.delete_many({'course_id': str(course_id)})
-            
-            async with create_canvas_session() as session:
-                for submission in submissions:
-                    student_id = submission.get('user_id', 'unknown')
-                    has_questions_before = 'questions' in submission
-                    
-                    # Fetch detailed submission data with questions if missing
-                    if 'questions' not in submission:
-                        submission_id = submission.get('id')
-                        if submission_id:
-                            questions_url = f"{CANVAS_API_URL}/quiz_submissions/{submission_id}/questions"
-                            headers = {'Authorization': f'Bearer {canvas_token}'}
-                            async with session.get(questions_url, headers=headers) as q_response:
-                                # Check rate limit before processing
-                                await check_rate_limit(q_response)
-                                if q_response.status == 200:
-                                    questions_data = await q_response.json()
-                                    submission['questions'] = questions_data.get('quiz_submission_questions', [])
-                                else:
-                                    logger.warning(f"Could not fetch questions for submission {submission_id} (student {student_id}): status {q_response.status}")
-                    
-                    num_questions = len(submission.get('questions', []))
-                    
-                    processed = await process_submission_data(submission)
-                    if processed:
-                        # Always include course_id for mastery trailing
-                        processed['course_id'] = str(course_id)
+        async with create_canvas_session() as session:
+            # Sync submissions for each quiz
+            for quiz in quizzes:
+                quiz_id = quiz.get('id')
+                quiz_title = quiz.get('title', 'Unknown')
+                
+                # Get all submissions for this quiz
+                submissions_result = await get_all_course_submissions(canvas_token, course_id, quiz_id)
+                
+                if 'error' in submissions_result:
+                    total_errors += 1
+                    logger.error(f"Failed to sync quiz {quiz_id} ({quiz_title}): {submissions_result.get('error')}")
+                    continue
+                
+                submissions = submissions_result.get('submissions', [])
+                
+                # Process and store each submission
+                from services.mastery_service import update_student_mastery, mastery_collection
+                
+                # Clear previous mastery data for this course to prevent $inc duplication 
+                # upon every sync interval (since we aggregate across all time)
+                if quiz == quizzes[0]: # Only do this once per course sync
+                    await mastery_collection.delete_many({'course_id': str(course_id)})
+                
+                # Internal helper for parallel question fetching
+                semaphore = asyncio.Semaphore(10) # Limit concurrency to 10 requests
+
+                async def fetch_and_process_submission(sub):
+                    nonlocal total_synced
+                    async with semaphore:
+                        student_id = sub.get('user_id', 'unknown')
                         
-                        # Always update mastery tracking (aggregated data)
-                        await update_student_mastery(processed)
-                    
-                    # Optionally store raw submission based on cache settings
-                    success = await store_submission_data(course_id, processed)
-                    if success:
-                        total_synced += 1
-                    else:
-                        # Mastery updated even if cache disabled
-                        pass
+                        # Fetch detailed submission data with questions if missing
+                        if 'questions' not in sub:
+                            submission_id = sub.get('id')
+                            if submission_id:
+                                questions_url = f"{CANVAS_API_URL}/quiz_submissions/{submission_id}/questions"
+                                headers = {'Authorization': f'Bearer {canvas_token}'}
+                                try:
+                                    async with session.get(questions_url, headers=headers) as q_response:
+                                        await check_rate_limit(q_response)
+                                        if q_response.status == 200:
+                                            questions_data = await q_response.json()
+                                            sub['questions'] = questions_data.get('quiz_submission_questions', [])
+                                        else:
+                                            logger.warning(f"Could not fetch questions for submission {submission_id} (student {student_id}): status {q_response.status}")
+                                except Exception as e:
+                                    logger.error(f"Error fetching questions for submission {submission_id}: {str(e)}")
+                        
+                        processed = await process_submission_data(sub)
+                        if processed:
+                            processed['course_id'] = str(course_id)
+                            # Update mastery tracking
+                            await update_student_mastery(processed)
+                            # Store raw submission
+                            success = await store_submission_data(course_id, processed)
+                            if success:
+                                total_synced += 1
+
+                # Execute all submissions for this quiz in parallel
+                await asyncio.gather(*(fetch_and_process_submission(s) for s in submissions))
         
         # Check how many mastery docs exist after sync
         mastery_count = await mastery_collection.count_documents({'course_id': str(course_id)})
