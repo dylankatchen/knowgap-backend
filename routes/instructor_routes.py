@@ -180,6 +180,8 @@ async def instructor_course_details_route(course_id):
                 'statusCode': result['statusCode']
             }), result['statusCode']
         
+        #saving code to use later
+
         return jsonify(result), 200
         
     except Exception as e:
