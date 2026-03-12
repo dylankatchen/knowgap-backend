@@ -44,7 +44,8 @@ app = cors(app,
         "http://localhost:3000",  # Allow AchieveUp frontend development
         "http://localhost:5001",  # Allow local API testing
         "http://127.0.0.1:5001",  # Allow local API testing (IP)
-        "https://achieveup.netlify.app"  # Allow AchieveUp frontend production
+        "https://achieveup.netlify.app",  # Allow AchieveUp frontend production
+        "https://achiveupapp.com"
     ],
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
