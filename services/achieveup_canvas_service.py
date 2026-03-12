@@ -140,6 +140,103 @@ async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'stu
             'message': 'An unexpected error occurred while validating the token.'
         }
 
+async def validate_canvas_instructor_for_course(canvas_token: str, course_id: str) -> dict:
+    """Validate Instructor of a specific course"""
+    try:
+        # Check if this is a demo token (only if demo mode is enabled)
+        if Config.ENABLE_DEMO_MODE and is_demo_token(canvas_token):
+            return await validate_demo_canvas_token(canvas_token, 'instructor')
+        
+        headers = {
+            'Authorization': f'Bearer {canvas_token}',
+            'Content-Type': 'application/json'
+        }
+
+        # Test token by calling Canvas API /users/self endpoint
+        url = f"{CANVAS_API_URL}/users/self"
+        async with create_canvas_session() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    if response.status == 401:
+                        return {
+                            'valid': False,
+                            'message': 'Invalid Canvas API token. Please check your token and try again.'
+                        }
+                    error_text = await response.text()
+                    logger.error(f"Canvas API validation error: {response.status} - {error_text}")
+                    return {
+                        'valid': False,
+                        'message': f'Canvas API returned error {response.status}. Please try again later.'
+                    }
+                user_data = await response.json()
+        
+        # Check if user is instructor for the specified course
+        user_id = user_data.get('id')
+        enrollments_url = f"{CANVAS_API_URL}/courses/{course_id}/enrollments"
+        params = {
+            'user_id': user_id,
+            'type[]': ['TeacherEnrollment', 'TaEnrollment', 'DesignerEnrollment'],
+            'state[]': 'active',
+            'per_page': 10
+        }
+        async with create_canvas_session() as session:
+            async with session.get(enrollments_url, headers=headers, params=params) as enrollments_response:
+                if enrollments_response.status == 401:
+                    return {
+                        'valid': False,
+                        'message': 'Failed to retrieve enrollment information.'
+                    }
+                if enrollments_response.status == 404:
+                    return {
+                        'valid': False,
+                        'message': 'Invalid Canvas API token. Please check your token and try again.'
+                    }
+                if enrollments_response.status != 200:
+                    error_text = await enrollments_response.text()
+                    logger.error(f"Canvas enrollments validation error: {enrollments_response.status} - {error_text}")
+                    return {
+                        'valid': False,
+                        'message': f'Canvas API returned error {enrollments_response.status}. Please try again later.'
+                    }
+                enrollments_data = await enrollments_response.json()
+            
+            #check if instructor level enrollment is active
+            if not enrollments_data or len(enrollments_data) == 0:
+                return {
+                    'valid': False,
+                    'message': f'Token is valid but user does not have instructor access to course {course_id}.'
+                }
+            enrollment_type = enrollments_data[0].get('type', '')
+            logger.info(f"User {user_id} has '{enrollment_type}' enrollemt in course {course_id}")
+
+            return {
+                'valid': True,
+                'message': f'Token is valid and user has instructor access to course {course_id}',
+                'user_info': {
+                    'id': user_data.get('id'),
+                    'name': user_data.get('name'),
+                    'email': user_data.get('email')
+                },
+                'permissions': {
+                    'instructor': True,
+                    'course_id': course_id,
+                    'enrollment_type': enrollment_type
+                }
+            }
+
+    except aiohttp.ClientError as e:
+        logger.error(f"Canvas API connection error: {str(e)}")
+        return {
+            'valid': False,
+            'message': 'Unable to connect to Canvas API. Please check your internet connection and try again.'
+        }
+    except Exception as e:
+        logger.error(f"Canvas course instructor validation error: {str(e)}")
+        return {
+            'valid': False,
+            'message': 'An unexpected error occurred while validating instructor access to the course.'
+        }
+
 async def get_canvas_courses(token: str) -> dict:
     """Get user's Canvas courses for AchieveUp using stored Canvas API token."""
     try:
@@ -427,6 +524,7 @@ async def get_instructor_courses(canvas_token: str) -> dict:
                             'id': str(course.get('id')),
                             'name': course.get('name', ''),
                             'code': course.get('course_code', '')
+                            #add code here 'description': course.get('public_description', '')
                         })
                     return courses
                 else:

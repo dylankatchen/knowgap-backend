@@ -56,6 +56,7 @@ async def suggest_skills_for_course(course_data: Dict[str, Any]) -> List[Dict[st
     logger.info("Using fallback rule-based skill generation")
     return generate_fallback_skills(course_data)
 
+#not called when button pressed go to function in achieveup_service with the same name
 async def generate_ai_skill_suggestions(course_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Generate skill suggestions using OpenAI."""
     if not OPENAI_API_KEY:

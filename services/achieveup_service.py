@@ -1181,7 +1181,10 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         
         course_name = course_data.get('courseName', '')
         course_code = course_data.get('courseCode', '')
-        course_description = course_data.get('courseDescription', '')
+        course_description = course_data.get('courseDescription', 'N/A')
+        print("Course name for AI:", course_name, "Hey Look at me")
+        print("Course code for AI:", course_code, "Hey Look at me")
+        print("Course Description for AI:", course_description, "Hey Look at me")
         
         prompt = f"""
         Generate 8-12 specific, measurable skills for this course. They should be about 3-5 words.
