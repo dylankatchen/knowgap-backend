@@ -1,4 +1,5 @@
 from quart import Blueprint, request, jsonify
+import asyncio
 from services.achieveup_service import (
     create_skill_matrix,
     update_skill_matrix,
@@ -829,6 +830,7 @@ async def instructor_force_sync_route(course_id):
 
         # Run the sync in the background to avoid Heroku/Netlify timeouts
         # The frontend will be notified that sync has started
+        from services.canvas_submissions_service import sync_course_submissions_direct
         asyncio.create_task(sync_course_submissions_direct(canvas_token, course_id))
 
         return jsonify({

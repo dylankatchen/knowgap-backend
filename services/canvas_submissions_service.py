@@ -439,6 +439,18 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str) -> d
         
         quizzes = quizzes_result if isinstance(quizzes_result, list) else []
         
+        if not quizzes:
+            logger.info(f"No quizzes found for course {course_id}")
+            return {
+                'message': 'No quizzes found (Direct)',
+                'course_id': course_id,
+                'total_quizzes': 0,
+                'total_synced': 0,
+                'total_errors': 0,
+                'progress_synced': 0,
+                'synced_at': datetime.utcnow()
+            }
+
         total_synced = 0
         total_errors = 0
         
