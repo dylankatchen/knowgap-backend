@@ -23,6 +23,9 @@ achieveup_question_skills_collection = db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLE
 achieveup_badges_collection = db[Config.ACHIEVEUP_BADGES_COLLECTION]
 achieveup_progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
 achieveup_analytics_collection = db[Config.ACHIEVEUP_ANALYTICS_COLLECTION]
+achieveup_course_descriptions_collection = db[Config.ACHIEVEUP_COURSE_DESCRIPTIONS_COLLECTION]
+
+MAX_COURSE_DESCRIPTION_LENGTH = 12000
 
 async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skills: list) -> dict:
     """Create skill matrix for a course."""
@@ -204,6 +207,115 @@ async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
         logger.error(f"Get all skill matrices by course error: {str(e)}")
         import traceback
         traceback.print_exc()
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_course_description(token: str, course_id: str) -> dict:
+    """Get persisted instructor course description used as AI context."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        user_role = user.get('role')
+        canvas_token_type = user.get('canvasTokenType', 'student')
+
+        if user_role != 'instructor' or canvas_token_type != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        doc = await achieveup_course_descriptions_collection.find_one(
+            {
+                'course_id': str(course_id),
+                'instructor_id': user['id']
+            },
+            {
+                '_id': 0
+            }
+        )
+
+        if not doc:
+            return {
+                'course_id': str(course_id),
+                'description': '',
+                'updated_at': None
+            }
+
+        return {
+            'course_id': doc.get('course_id', str(course_id)),
+            'description': doc.get('description', ''),
+            'updated_at': doc.get('updated_at').isoformat() if doc.get('updated_at') else None
+        }
+
+    except Exception as e:
+        logger.error(f"Get course description error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def upsert_course_description(token: str, course_id: str, description: str) -> dict:
+    """Create or update persisted instructor course description used as AI context."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        user_role = user.get('role')
+        canvas_token_type = user.get('canvasTokenType', 'student')
+
+        if user_role != 'instructor' or canvas_token_type != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        if not isinstance(description, str):
+            return {
+                'error': 'Invalid request',
+                'message': 'description must be a string',
+                'statusCode': 400
+            }
+
+        if len(description) > MAX_COURSE_DESCRIPTION_LENGTH:
+            return {
+                'error': 'Validation failed',
+                'message': f'description cannot exceed {MAX_COURSE_DESCRIPTION_LENGTH} characters',
+                'statusCode': 400
+            }
+
+        now = datetime.utcnow()
+        query = {
+            'course_id': str(course_id),
+            'instructor_id': user['id']
+        }
+
+        await achieveup_course_descriptions_collection.update_one(
+            query,
+            {
+                '$set': {
+                    'course_id': str(course_id),
+                    'instructor_id': user['id'],
+                    'description': description,
+                    'updated_at': now
+                },
+                '$setOnInsert': {
+                    'created_at': now
+                }
+            },
+            upsert=True
+        )
+
+        return {
+            'course_id': str(course_id),
+            'description': description,
+            'updated_at': now.isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Upsert course description error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def assign_skills_to_questions(token: str, course_id: str, question_skills: dict) -> dict:
@@ -1172,6 +1284,8 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         user_result = await achieveup_verify_token(token)
         if 'error' in user_result:
             return user_result
+
+        user = user_result['user']
         
         # Use OpenAI directly with proper async syntax
         from openai import AsyncOpenAI
@@ -1181,10 +1295,30 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         
         course_name = course_data.get('courseName', '')
         course_code = course_data.get('courseCode', '')
-        course_description = course_data.get('courseDescription', 'N/A')
-        print("Course name for AI:", course_name, "Hey Look at me")
-        print("Course code for AI:", course_code, "Hey Look at me")
-        print("Course Description for AI:", course_description, "Hey Look at me")
+        course_id = str(course_data.get('courseId', ''))
+
+        stored_description = ''
+        if course_id:
+            stored_doc = await achieveup_course_descriptions_collection.find_one(
+                {
+                    'course_id': course_id,
+                    'instructor_id': user['id']
+                },
+                {
+                    'description': 1,
+                    '_id': 0
+                }
+            )
+            if stored_doc and isinstance(stored_doc.get('description'), str):
+                stored_description = stored_doc['description'].strip()
+
+        request_description = (course_data.get('courseDescription') or '').strip()
+        course_description = stored_description or request_description or 'N/A'
+        logger.info(
+            "AI skill suggestion course description source for course %s: %s",
+            course_id,
+            'stored' if stored_description else 'request'
+        )
         
         prompt = f"""
         Generate 8-12 specific, measurable skills for this course. They should be about 3-5 words.
@@ -1224,7 +1358,8 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
             'courseName': course_name,
             'skills': skills,  # Changed from 'suggestedSkills' to match frontend expectation
             'generatedAt': datetime.utcnow().isoformat(),
-            'method': 'ai'
+            'method': 'ai',
+            'courseDescriptionSource': 'stored' if stored_description else 'request'
         }
         
     except Exception as e:
