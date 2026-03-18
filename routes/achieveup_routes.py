@@ -1,4 +1,5 @@
 from quart import Blueprint, request, jsonify
+import asyncio
 from services.achieveup_service import (
     create_skill_matrix,
     update_skill_matrix,
@@ -16,7 +17,9 @@ from services.achieveup_service import (
     get_question_suggestions,
     get_all_skill_matrices_by_course,
     get_assigned_skills,
-    delete_skill_matrix  # Add new import
+    delete_skill_matrix,  # Add new import
+    get_course_description,
+    upsert_course_description
 )
 import logging
 
@@ -194,6 +197,80 @@ async def get_course_skill_matrices_route(course_id):
         logger.error(f"Get Course Matrices Route Error: {str(e)}")
         import traceback
         traceback.print_exc()
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/course-description/<course_id>', methods=['GET'])
+async def get_course_description_route(course_id):
+    """Get persisted instructor course description for a course."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+        result = await get_course_description(token, course_id)
+
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Get course description route error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/course-description/<course_id>', methods=['PUT'])
+async def upsert_course_description_route(course_id):
+    """Persist instructor course description for a course."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+        data = await request.get_json()
+
+        if not isinstance(data, dict):
+            return jsonify({
+                'error': 'Invalid request',
+                'message': 'Request body must be a JSON object',
+                'statusCode': 400
+            }), 400
+
+        description = data.get('description', '')
+        result = await upsert_course_description(token, course_id, description)
+
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Upsert course description route error: {str(e)}")
         return jsonify({
             'error': 'Internal server error',
             'message': 'An unexpected error occurred',
@@ -788,6 +865,69 @@ async def instructor_course_analytics_route(course_id):
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
+
+@achieveup_bp.route('/achieveup/instructor/course/<course_id>/force-sync', methods=['POST'])
+async def instructor_force_sync_route(course_id):
+    """Force a data sync for a specific course (instructor only).
+    Triggers Canvas submission fetch → mastery update → progress update immediately."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        # Verify instructor
+        from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return jsonify(user_result), user_result.get('statusCode', 401)
+
+        user = user_result['user']
+        if user.get('role') != 'instructor' or user.get('canvasTokenType') != 'instructor':
+            return jsonify({
+                'error': 'Forbidden',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }), 403
+
+        # Get the instructor's Canvas token
+        canvas_token = await get_user_canvas_token(user['id'])
+        if not canvas_token:
+            return jsonify({
+                'error': 'Canvas token not found',
+                'message': 'Please connect your Canvas account in Settings',
+                'statusCode': 400
+            }), 400
+
+        # Run the sync in the background to avoid Heroku/Netlify timeouts
+        # The frontend will be notified that sync has started
+        from services.canvas_submissions_service import sync_course_submissions_direct
+        asyncio.create_task(sync_course_submissions_direct(canvas_token, course_id))
+
+        return jsonify({
+            'message': f'Sync started in background for course {course_id}. This may take a minute.',
+            'status': 'processing',
+            'details': {
+                'total_quizzes': 0,
+                'total_synced': 0,
+                'progress_synced': 0,
+                'total_errors': 0,
+                'is_background': True
+            }
+        }), 202
+
+    except Exception as e:
+        logger.error(f"Force sync error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred during sync',
+            'statusCode': 500
+        }), 500
 
 @achieveup_bp.route('/achieveup/questions/analyze', methods=['POST'])
 async def analyze_questions_route():

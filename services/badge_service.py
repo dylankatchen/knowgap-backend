@@ -19,6 +19,7 @@ db = client[Config.DATABASE]
 achieveup_badges_collection = db[Config.ACHIEVEUP_BADGES_COLLECTION]
 achieveup_user_badges_collection = db[Config.ACHIEVEUP_USER_BADGES_COLLECTION]
 achieveup_badge_progress_collection = db[Config.ACHIEVEUP_BADGE_PROGRESS_COLLECTION]
+achieveup_student_skill_mastery_collection = db[Config.ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION]
 
 async def generate_badges_for_user(token: str, data: dict) -> dict:
     """Generate badges for a user based on their progress."""
@@ -222,6 +223,43 @@ async def share_badge(token: str, badge_id: str, data: dict) -> dict:
         logger.error(f"Share badge error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
+async def create_badge_for_student(user_id: str, course_id: str, skill_id: str, badge_level: str, progress_percentage: float) -> dict:
+    """
+    Create a badge for a student. Intended to be called by internal services (e.g. mastery_service).
+    """
+    try:
+        # Get skill details (for name)
+        # We try to find name from an existing badge or assignments, or defaults.
+        # Ideally we have it. For now, fetch from matrix or mastery?
+        # Let's check if the mastery record has it (we stored it in mastery_service)
+        mastery_doc = await achieveup_student_skill_mastery_collection.find_one({
+            'user_id': user_id, 'course_id': course_id, 'skill_id': skill_id
+        })
+        skill_name = mastery_doc.get('skill_name', 'Skill') if mastery_doc else 'Skill'
+
+        badge_name = f"{badge_level.title()} in {skill_name}"
+        
+        badge_id = str(uuid.uuid4())
+        badge_doc = {
+            'badge_id': badge_id,
+            'user_id': user_id,
+            'skill_id': skill_id,
+            'skill_name': skill_name,
+            'badge_level': badge_level,
+            'badge_name': badge_name,
+            'course_id': course_id,
+            'progress_percentage': progress_percentage,
+            'earned_at': datetime.utcnow(),
+            'shareable_link': f"/badges/{badge_id}/share"
+        }
+        
+        await achieveup_user_badges_collection.insert_one(badge_doc)
+        logger.info(f"Awarded {badge_level} badge to {user_id} for {skill_id}")
+        return badge_doc
+    except Exception as e:
+        logger.error(f"Error creating badge for student: {str(e)}")
+        return None
+
 async def get_badge_progress(token: str, skill_id: str, course_id: str) -> dict:
     """Get progress toward earning a badge for a specific skill."""
     try:
@@ -288,12 +326,7 @@ async def get_badge_progress(token: str, skill_id: str, course_id: str) -> dict:
 # Helper functions
 async def get_user_skill_progress(user_id: str, course_id: str) -> list:
     """
-    Get user's skill progress for a course based on real quiz submissions.
-    
-    Calculates progress by:
-    1. Fetching all quiz submissions for the student
-    2. Getting skill assignments for each question
-    3. Calculating percentage of correct answers per skill
+    Get user's skill progress for a course based on aggregated mastery data.
     
     Args:
         user_id: Student's Canvas user ID
@@ -303,76 +336,33 @@ async def get_user_skill_progress(user_id: str, course_id: str) -> list:
         list: Skill progress data with percentages
     """
     try:
-        from services.canvas_submissions_service import get_cached_submission
-        
-        # Get all skill assignments for this course
-        skill_assignments = {}
-        async for assignment in db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLECTION].find({'course_id': course_id}):
-            question_id = assignment.get('question_id')
-            skills = assignment.get('skills', [])
-            skill_assignments[question_id] = skills
-        
-        # If no skill assignments exist, return empty list
-        if not skill_assignments:
-            logger.warning(f"No skill assignments found for course {course_id}")
-            return []
-        
-        # Get all quiz submissions for this student in the course
-        submissions_cursor = db.get_collection('AchieveUp_Quiz_Submissions').find({
+        # Fetch from new aggregated collection
+        cursor = achieveup_student_skill_mastery_collection.find({
             'student_id': user_id,
             'course_id': course_id
         })
         
-        # Track skill performance
-        skill_stats = {}  # {skill_name: {'correct': int, 'total': int}}
-        
-        async for submission in submissions_cursor:
-            questions = submission.get('questions', [])
-            
-            for question in questions:
-                question_id = question.get('question_id')
-                correct = question.get('correct', False)
-                
-                # Get assigned skills for this question
-                assigned_skills = skill_assignments.get(question_id, [])
-                
-                for skill in assigned_skills:
-                    skill_name = skill.get('name') if isinstance(skill, dict) else skill
-                    
-                    if skill_name not in skill_stats:
-                        skill_stats[skill_name] = {'correct': 0, 'total': 0}
-                    
-                    skill_stats[skill_name]['total'] += 1
-                    if correct:
-                        skill_stats[skill_name]['correct'] += 1
-        
-        # Calculate progress percentages
         progress_data = []
-        for skill_name, stats in skill_stats.items():
-            total = stats['total']
-            correct = stats['correct']
-            
-            if total > 0:
-                progress_percentage = (correct / total) * 100
-            else:
-                progress_percentage = 0
-            
+        async for doc in cursor:
             progress_data.append({
-                'skill_id': skill_name.lower().replace(' ', '_'),
-                'skill_name': skill_name,
-                'progress_percentage': round(progress_percentage, 2),
-                'questions_attempted': total,
-                'questions_correct': correct
+                'skill_id': doc.get('skill_id'),
+                'skill_name': doc.get('skill_name', 'Unknown Skill'),
+                'progress_percentage': round(doc.get('mastery_percentage', 0), 2),
+                'questions_attempted': doc.get('total_attempted', 0),
+                'questions_correct': doc.get('total_correct', 0)
             })
+            
+        # If no data found in new collection yet, should we fallback?
+        # For now, let's assume the new system is the source of truth.
+        # If empty, return empty.
         
-        # Sort by skill name for consistency
+        # Sort by skill name
         progress_data.sort(key=lambda x: x['skill_name'])
         
         return progress_data
         
     except Exception as e:
         logger.error(f"Get user skill progress error: {str(e)}")
-        # Return empty list on error rather than failing completely
         return []
 
 def get_badge_criteria(badge_level: str) -> int:

@@ -1,5 +1,6 @@
 from quart import request, jsonify
 from services.achieveup_auth_service import achieveup_verify_token,achieveup_users_collection
+from services.achieveup_canvas_service import validate_canvas_instructor_for_course
 from services.course_service import update_context,update_course_risk_toggle, get_course_risk_toggle, update_student_quiz_data, get_incorrect_question_data, get_questions_by_course, update_quiz_reccs, update_quiz_questions_per_course, get_student_grade, get_student_profile, sync_all_quizzes_questions
 from services.video_service import update_course_videos
 from utils.course_utils import get_quizzes
@@ -200,8 +201,8 @@ def init_course_routes(app):
                     'statusCode': 401
                 }), 401
 
-            canvas_token_type = 'instructor'
-            validation_result = await validate_canvas_token(canvas_api_token, canvas_token_type)
+            #canvas_token_type = 'instructor'
+            validation_result = await validate_canvas_instructor_for_course(canvas_api_token, course_id) 
 
             if not validation_result['valid']:
                 return jsonify({

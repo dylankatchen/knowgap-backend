@@ -39,6 +39,7 @@ class Config:
     ACHIEVEUP_SKILL_MATRICES_COLLECTION = "AchieveUp_Skill_Matrices"
     ACHIEVEUP_SKILL_ASSIGNMENTS_COLLECTION = "AchieveUp_Skill_Assignments"
     ACHIEVEUP_QUESTION_SKILLS_COLLECTION = "AchieveUp_Question_Skills"
+    ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION = "AchieveUp_Student_Skill_Mastery"
     ACHIEVEUP_BADGES_COLLECTION = "AchieveUp_Badges"
     ACHIEVEUP_USER_BADGES_COLLECTION = "AchieveUp_User_Badges"
     ACHIEVEUP_BADGE_PROGRESS_COLLECTION = "AchieveUp_Badge_Progress"
@@ -53,6 +54,7 @@ class Config:
     ACHIEVEUP_CANVAS_QUIZZES_COLLECTION = "AchieveUp_Canvas_Quizzes"
     ACHIEVEUP_CANVAS_QUESTIONS_COLLECTION = "AchieveUp_Canvas_Questions"
     ACHIEVEUP_QUIZ_SUBMISSIONS_COLLECTION = "AchieveUp_Quiz_Submissions"
+    ACHIEVEUP_COURSE_DESCRIPTIONS_COLLECTION = "AchieveUp_Course_Descriptions"
     
     # AchieveUp configuration
     ACHIEVEUP_JWT_SECRET = os.getenv("ACHIEVEUP_JWT_SECRET", "achieveup-secret-key-change-in-production")
