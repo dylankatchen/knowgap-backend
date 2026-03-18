@@ -7,6 +7,27 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from services.achieveup_auth_service import achieveup_verify_token
 from config import Config
 
+import re
+from html import unescape
+
+def normalize_quiz_title(title: str) -> str:
+    if not title:
+        return ''
+    return re.sub(r'\s+', ' ', title).strip().lower()
+
+def strip_html(text: str) -> str:
+    if not text:
+        return ''
+    text = re.sub(r'<[^>]+>', ' ', text)
+    return unescape(text)
+
+def normalize_question_text(text: str) -> str:
+    text = strip_html(text)
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -44,7 +65,7 @@ async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skil
                 'message': 'Instructor access required',
                 'statusCode': 403
             }
-        
+        logger.info("#########################################")
         # Check if matrix name already exists for this course (allow multiple matrices per course)
         existing_matrix = await achieveup_skill_matrices_collection.find_one({
             'course_id': course_id, 
@@ -1571,4 +1592,205 @@ async def delete_skill_matrix(token: str, matrix_id: str) -> dict:
         logger.error(f"Delete skill matrix error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
- 
+async def import_matrices_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
+    
+    source_matrices = await get_all_skill_matrices_by_course(token,source_course_id)
+    
+    if not source_matrices:
+        return {
+            'error': 'No matrices found',
+            'message': f'No skill matrices found for source course {source_course_id}',
+            'statusCode': 404
+        }
+
+    imported = []
+    matrices = source_matrices.get('matrices', [])
+    for matrix in matrices:
+        matrix_name = matrix.get('matrix_name') + ' (Imported Skills Matrix)'
+        skills = matrix.get('skills', []) or []
+        created = await create_skill_matrix(token, target_course_id,matrix_name, skills)
+        imported.append(created)
+
+    return imported
+
+
+def strip_html(text: str) -> str:
+    if not text:
+        return ''
+    text = re.sub(r'<[^>]+>', ' ', text)
+    return unescape(text)
+
+def normalize_text(text: str) -> str:
+    text = strip_html(text).lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+async def import_skill_setting_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
+    """Import question skill assignments from source course to target course by matching quiz names and question text."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        if user['role'] != 'instructor' or user.get('canvasTokenType') != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        from services.achieveup_auth_service import get_user_canvas_token
+        from services.achieveup_canvas_service import get_instructor_quiz_questions, get_instructor_course_quizzes
+
+        canvas_token = await get_user_canvas_token(user_id)
+        if not canvas_token:
+            return {
+                'error': 'No Canvas token',
+                'message': 'No Canvas API token found for user',
+                'statusCode': 400
+            }
+
+        source_quizzes = await get_instructor_course_quizzes(canvas_token, source_course_id)
+        target_quizzes = await get_instructor_course_quizzes(canvas_token, target_course_id)
+
+        if isinstance(source_quizzes, dict) and 'error' in source_quizzes:
+            return source_quizzes
+        if isinstance(target_quizzes, dict) and 'error' in target_quizzes:
+            return target_quizzes
+
+        # map target quizzes by normalized title
+        target_quiz_map = {
+            normalize_text(q.get('title', '')): q
+            for q in target_quizzes
+        }
+
+        imported_count = 0
+        matched_quizzes = 0
+        matched_questions = 0
+        details = []
+
+        for source_quiz in source_quizzes:
+            source_quiz_title = source_quiz.get('title', '')
+            source_quiz_key = normalize_text(source_quiz_title)
+
+            target_quiz = target_quiz_map.get(source_quiz_key)
+            if not target_quiz:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'No matching target quiz found'
+                })
+                continue
+
+            matched_quizzes += 1
+
+            source_quiz_id = str(source_quiz.get('id'))
+            target_quiz_id = str(target_quiz.get('id'))
+
+            source_questions = await get_instructor_quiz_questions(canvas_token, source_quiz_id, source_course_id)
+            target_questions = await get_instructor_quiz_questions(canvas_token, target_quiz_id, target_course_id)
+
+
+            if isinstance(source_questions, dict) and 'error' in source_questions:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'Failed to load source questions'
+                })
+                continue
+
+            if isinstance(target_questions, dict) and 'error' in target_questions:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'Failed to load target questions'
+                })
+                continue
+
+            source_question_ids = [str(q.get('id')) for q in source_questions if q.get('id')]
+            source_assignments_result = await get_assigned_skills(token, source_course_id, source_question_ids)
+
+            if 'error' in source_assignments_result:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'Failed to load source assignments'
+                })
+                continue
+
+            source_assignments = source_assignments_result.get('question_skills', {})
+
+            # target questions by normalized question text
+            target_question_map = {}
+            for tq in target_questions:
+                key = normalize_text(tq.get('question_text', ''))
+                if key and key not in target_question_map:
+                    target_question_map[key] = tq
+
+            target_question_skills = {}
+            quiz_imported_count = 0
+
+            for sq in source_questions:
+                source_qid = str(sq.get('id'))
+                source_skills = source_assignments.get(source_qid, [])
+                if not source_skills:
+                    continue
+
+                source_qtext_key = normalize_text(sq.get('question_text', ''))
+                if not source_qtext_key:
+                    continue
+
+                matched_target_question = target_question_map.get(source_qtext_key)
+                if not matched_target_question:
+                    continue
+
+                target_qid = str(matched_target_question.get('id'))
+                target_question_skills[target_qid] = source_skills
+                quiz_imported_count += 1
+
+            if target_question_skills:
+                save_result = await assign_skills_to_questions(token, target_course_id, target_question_skills)
+                if 'error' in save_result:
+                    details.append({
+                        'quiz_title': source_quiz_title,
+                        'status': 'failed',
+                        'reason': save_result.get('message', save_result.get('error'))
+                    })
+                    continue
+
+                imported_count += len(target_question_skills)
+                matched_questions += quiz_imported_count
+
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'imported',
+                    'matched_questions': quiz_imported_count
+                })
+            else:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'No matching assigned questions found'
+                })
+
+        return {
+            'message': 'Skill assignments imported successfully',
+            'source_course_id': source_course_id,
+            'target_course_id': target_course_id,
+            'matched_quizzes': matched_quizzes,
+            'matched_questions': matched_questions,
+            'imported_count': imported_count,
+            'details': details
+        }
+
+    except Exception as e:
+        logger.error(f"Import skill assignment error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'error': 'Internal server error',
+            'message': str(e),
+            'statusCode': 500
+        }

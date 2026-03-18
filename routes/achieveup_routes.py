@@ -1547,3 +1547,149 @@ async def delete_skill_matrix_route(matrix_id):
             'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500
+
+@achieveup_bp.route('/achieveup/matrix/import', methods=['POST'])
+async def import_matrices_route():
+    """Import all skill matrices from a source course into a target course."""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return jsonify({
+                'error': user_result['error'],
+                'message': user_result['error'],
+                'statusCode': user_result['statusCode']
+            }), user_result['statusCode']
+
+        # Parse request body
+        data = await request.get_json()
+        if not data:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'Request body is required',
+                'statusCode': 400
+            }), 400
+
+        source_course_id = data.get('source_course_id')
+        target_course_id = data.get('target_course_id')
+        
+        if not source_course_id or not target_course_id:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'source_course_id and target_course_id are required',
+                'statusCode': 400
+            }), 400
+
+        if source_course_id == target_course_id:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'Source and target course cannot be the same',
+                'statusCode': 400
+            }), 400
+
+        from services.achieveup_service import import_matrices_from_course
+
+        result = await import_matrices_from_course(
+            source_course_id=source_course_id,
+            target_course_id=target_course_id,
+            user_id=user_result['user']['id'], token=token
+        )
+
+        if isinstance(result, dict) and 'error' in result:
+            return jsonify(result), result.get('statusCode', 500)
+
+        return jsonify({
+            'message': 'Matrices imported successfully',
+            'imported_count': len(result),
+            'matrices': result
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e),
+            'statusCode': 500
+        }), 500
+    
+@achieveup_bp.route('/achieveup/skills/import', methods=['POST'])
+async def import_skills_assignment_route():
+    """Import skill assignments from a source course into a target course."""
+    
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        from services.achieveup_auth_service import achieveup_verify_token
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return jsonify({
+                'error': user_result['error'],
+                'message': user_result['error'],
+                'statusCode': user_result['statusCode']
+            }), user_result['statusCode']
+
+        data = await request.get_json()
+        if not data:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'Request body is required',
+                'statusCode': 400
+            }), 400
+        
+        source_course_id = data.get('source_course_id')
+        target_course_id = data.get('target_course_id')
+        
+        if not source_course_id or not target_course_id:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'source_course_id and target_course_id are required',
+                'statusCode': 400
+            }), 400
+
+        if source_course_id == target_course_id:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'Source and target course cannot be the same',
+                'statusCode': 400
+            }), 400
+
+        from services.achieveup_service import import_skill_setting_from_course
+
+        
+
+        result = await import_skill_setting_from_course(
+            source_course_id=source_course_id,
+            target_course_id=target_course_id,
+            user_id=user_result['user']['id'],
+            token=token
+        )
+
+        if 'error' in result:
+            return jsonify(result), result.get('statusCode', 500)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e),
+            'statusCode': 500
+        }), 500

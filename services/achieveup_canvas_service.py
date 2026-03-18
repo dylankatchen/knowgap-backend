@@ -426,7 +426,8 @@ async def get_instructor_courses(canvas_token: str) -> dict:
                         courses.append({
                             'id': str(course.get('id')),
                             'name': course.get('name', ''),
-                            'code': course.get('course_code', '')
+                            'code': course.get('course_code', ''),
+                            'term': course.get('enrollment_term_id','')
                         })
                     return courses
                 else:
