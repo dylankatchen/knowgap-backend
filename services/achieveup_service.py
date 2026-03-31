@@ -45,6 +45,7 @@ achieveup_badges_collection = db[Config.ACHIEVEUP_BADGES_COLLECTION]
 achieveup_progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
 achieveup_analytics_collection = db[Config.ACHIEVEUP_ANALYTICS_COLLECTION]
 achieveup_course_descriptions_collection = db[Config.ACHIEVEUP_COURSE_DESCRIPTIONS_COLLECTION]
+achieveup_import_status_collection = db[Config.ACHIEVEUP_IMPORT_STATUS_COLLECTION]
 
 MAX_COURSE_DESCRIPTION_LENGTH = 12000
 
@@ -1765,6 +1766,23 @@ async def import_matrices_from_course(source_course_id: str, target_course_id: s
         created = await create_skill_matrix(token, target_course_id,matrix_name, skills)
         imported.append(created)
 
+    await achieveup_import_status_collection.update_one(
+        {'target_course_id': target_course_id},
+        {
+            '$set': {
+                'source_course_id': source_course_id,
+                'target_course_id': target_course_id,
+                'matrices_imported': True,
+                'updated_at': datetime.utcnow()
+            },
+            '$setOnInsert': {
+                'assignments_imported': False,
+                'created_at': datetime.utcnow()
+            }
+        },
+        upsert=True
+    )    
+
     return imported
 
 
@@ -1929,6 +1947,23 @@ async def import_skill_setting_from_course(source_course_id: str, target_course_
                     'reason': 'No matching assigned questions found'
                 })
 
+        await achieveup_import_status_collection.update_one(
+            {'target_course_id': target_course_id},
+            {
+                '$set': {
+                'source_course_id': source_course_id,
+                'target_course_id': target_course_id,
+                'assignments_imported': True,
+                'updated_at': datetime.utcnow()
+                },
+                '$setOnInsert': {
+                'matrices_imported': False,
+                'created_at': datetime.utcnow()
+                }
+            },
+            upsert=True
+        )  
+
         return {
             'message': 'Skill assignments imported successfully',
             'source_course_id': source_course_id,
@@ -1939,6 +1974,8 @@ async def import_skill_setting_from_course(source_course_id: str, target_course_
             'details': details
         }
 
+          
+
     except Exception as e:
         logger.error(f"Import skill assignment error: {str(e)}")
         import traceback
@@ -1948,3 +1985,28 @@ async def import_skill_setting_from_course(source_course_id: str, target_course_
             'message': str(e),
             'statusCode': 500
         }
+    
+async def get_import_status(token: str, course_id: str) -> dict:
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        status = await achieveup_import_status_collection.find_one(
+            {'target_course_id': course_id},
+            {'_id': 0}
+        )
+
+        if not status:
+            return {
+                'target_course_id': course_id,
+                'matrices_imported': False,
+                'assignments_imported': False
+            }
+
+        return status
+
+    except Exception as e:
+        logger.error(f"Get import status error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+    

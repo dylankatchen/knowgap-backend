@@ -1833,3 +1833,31 @@ async def import_skills_assignment_route():
             'message': str(e),
             'statusCode': 500
         }), 500
+    
+@achieveup_bp.route('/achieveup/import-status/<course_id>', methods=['GET'])
+async def get_import_status_route(course_id):
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        from services.achieveup_service import get_import_status
+        result = await get_import_status(token, course_id)
+
+        if 'error' in result:
+            return jsonify(result), result.get('statusCode', 500)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e),
+            'statusCode': 500
+        }), 500
