@@ -17,7 +17,7 @@ mongo_client = AsyncIOMotorClient(
 db = mongo_client[Config.DATABASE]
 students_collection = db[Config.STUDENTS_COLLECTION]
 quizzes_collection = db[Config.QUIZZES_COLLECTION]
-contexts_collection = db[Config.CONTEXTS_COLLECTION]  # For course context data
+contexts_collection = db[Config.CONTEXTS_COLLECTION]
 
 async def get_assessment_videos(student_id, course_id):
     """Show all recommended videos for quizzes the student has submissions for, regardless of missed questions."""
@@ -42,7 +42,6 @@ async def get_assessment_videos(student_id, course_id):
         quiz_id = quiz.get('quiz_id')
         # print(f"Processing quiz {quiz_name} ({quiz_id}) for all questions")
 
-        # --- NEW LOGIC: Recommend all videos for all questions in quizzes with submissions ---
         questions_cursor = quizzes_collection.find({"quizid": int(quiz_id), "courseid": str(course_id)})
         questions = await questions_cursor.to_list(length=None)
         # print(f"Found {len(questions)} questions for quiz {quiz_id}")
@@ -70,47 +69,6 @@ async def get_assessment_videos(student_id, course_id):
             else:
                 print(f"No video data found or duplicate for question {question_data.get('questionid')}")
 
-        # --- END NEW LOGIC ---
-
-        # --- OLD LOGIC: Recommend videos only for missed questions (commented out) ---
-        # incorrect_questions = quiz.get('questions', [])
-        # print(f"Processing quiz {quiz_name} with {len(incorrect_questions)} incorrect questions")
-        # for question in incorrect_questions:
-        #     print(f"Looking for question data for quiz {quiz_id}, question {question.get('question_id')}")
-        #     question_data = await quizzes_collection.find_one({
-        #         "quizid": int(quiz_id), 
-        #         "questionid": str(question.get("question_id"))
-        #     })
-        #     if question_data:
-        #         print(f"Found question data: {question_data}")
-        #         core_topic = question_data.get("core_topic", "No topic found")
-        #         video_data = question_data.get('video_data')
-        #         print(f"Question has core topic: {core_topic} and video data: {video_data}")
-        #         if not video_data:
-        #             print(f"No video data found, searching for matching core topic")
-        #             matching_core_topic_data = find_documents_by_field("Quiz Questions", "core_topic", core_topic)
-        #             for doc in matching_core_topic_data:
-        #                 matching_video_data = doc.get("video_data")
-        #                 if matching_video_data:
-        #                     video_data = matching_video_data
-        #                     print(f"Found matching video data from core topic")
-        #                     break
-        #         if isinstance(video_data, list) and len(video_data) > 0:
-        #             video_data = video_data[0]
-        #             print(f"Extracted first video from list")
-        #         if video_data and video_data.get('link') and video_data['link'] not in used_video_links:
-        #             used_video_links.add(video_data['link'])
-        #             res.append({
-        #                 "quiz_name": quiz_name,
-        #                 "questionid": question_data.get("questionid"),
-        #                 "question_text": question_data.get("question_text"),
-        #                 "topic": core_topic,
-        #                 "video": video_data
-        #             })
-        #             print(f"Added video recommendation for question")
-        #     else:
-        #         print(f"No question data found for quiz {quiz_id}, question {question.get('question_id')}")
-        # --- END OLD LOGIC ---
 
     # print(f"Returning {len(res)} video recommendations")
     return res
@@ -119,17 +77,16 @@ async def get_course_videos(course_id):
     """Fetch all video data associated with a specific course ID."""
     try:
         # print(f"Starting get_course_videos for course_id: {course_id}")
-        # Add index hint and limit the fields we're retrieving
         projection = {
             'video_data': 1,
             'core_topic': 1,
             'question_text': 1,
             'quizid': 1,
             'questionid': 1,
-            '_id': 0  # Exclude _id field
+            '_id': 0 
         }
         
-        # Use find().to_list() instead of async for to get all results at once
+        
         quizzes = await quizzes_collection.find(
             {"courseid": course_id},
             projection=projection
@@ -306,7 +263,7 @@ video_votes_collection = db["video_votes"]
 async def vote_video(student_id, course_id, question_id, video_link, vote_type):
     """Record or update a student's vote for a recommended video."""
     try:
-        valid_votes = {"upvote", "downvote"}
+        valid_votes = {"upvote", "downvote", "remove"}
         if vote_type not in valid_votes:
             return {"success": False, "error": "Invalid vote type."}
 
@@ -324,6 +281,10 @@ async def vote_video(student_id, course_id, question_id, video_link, vote_type):
             "question_id": str(question_id),
             "video_link": video_link.strip()
         }
+
+        if vote_type == "remove":
+            await video_votes_collection.delete_one(filter_doc)
+            return {"success": True, "message": "Vote removed successfully."}
 
         now = datetime.now(timezone.utc)
 
@@ -362,3 +323,67 @@ async def vote_video(student_id, course_id, question_id, video_link, vote_type):
             "success": False,
             "error": f"Failed to record vote: {str(e)}"
         }
+
+async def get_vote_counts(course_id, question_ids):
+    """
+    Returns upvote and downvote counts for a list of question_ids in a course.
+
+    Returns a dict keyed by question_id:
+    {
+        "123": { "upvotes": 4, "downvotes": 1 },
+        "456": { "upvotes": 0, "downvotes": 2 },
+        ...
+    }
+    """
+    pipeline = [
+        {
+            "$match": {
+                "course_id": str(course_id),
+                "question_id": {"$in": [str(qid) for qid in question_ids]}
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "question_id": "$question_id",
+                    "vote_type": "$vote_type"
+                },
+                "count": {"$sum": 1}
+            }
+        }
+    ]
+
+    results = await video_votes_collection.aggregate(pipeline).to_list(length=None)
+
+    counts = {str(qid): {"upvotes": 0, "downvotes": 0} for qid in question_ids}
+    for r in results:
+        qid = r["_id"]["question_id"]
+        vote_type = r["_id"]["vote_type"]
+        if qid in counts:
+            if vote_type == "upvote":
+                counts[qid]["upvotes"] = r["count"]
+            elif vote_type == "downvote":
+                counts[qid]["downvotes"] = r["count"]
+
+    return counts
+
+
+async def get_student_votes(student_id, course_id, question_ids):
+    """
+    Returns this specific student's vote for each question_id in the list.
+
+    Returns a dict keyed by question_id:
+    {
+        "123": "upvote",
+        "456": "downvote",
+        ...  # missing key means no vote cast yet
+    }
+    """
+    cursor = video_votes_collection.find({
+        "student_id": student_id,
+        "course_id": str(course_id),
+        "question_id": {"$in": [str(qid) for qid in question_ids]}
+    })
+
+    votes = await cursor.to_list(length=None)
+    return {v["question_id"]: v["vote_type"] for v in votes}
