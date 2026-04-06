@@ -301,47 +301,64 @@ async def get_watched_videos(student_id, course_id):
 
 from datetime import datetime, timezone
 
+video_votes_collection = db["video_votes"]
+
 async def vote_video(student_id, course_id, question_id, video_link, vote_type):
-    """Record upvote or downvote video"""
-    valid_votes = ["upvote", "downvote"]
-    if vote_type not in valid_votes:
-        return {"success": False, "error": "Invalid vote type."}
-    
-    #Fetch student to ensure they exist
-    student = await students_collection.find_one({"_id": student_id})
-    if not student:
-        return {"success" : False, "error":"Student not found."}
-    
-    #vote document
-    vote_doc = {
-        "student_id" : student_id,
-        "course_id": str(course_id),
-        "question_id": str(question_id),
-        "video_link": video_link,
-        "vote_type": vote_type,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
+    """Record or update a student's vote for a recommended video."""
+    try:
+        valid_votes = {"upvote", "downvote"}
+        if vote_type not in valid_votes:
+            return {"success": False, "error": "Invalid vote type."}
 
-    #create/update students' votes
-    votes_collection = db["video_votes"]
+        if not student_id or not course_id or not question_id or not video_link:
+            return {"success": False, "error": "Missing required parameters."}
 
-    #Ensure one vote per student per video
-    existing = await votes_collection.find_one({
-        "student_id": student_id,
-        "course_id": str(course_id),
-        "question_id": str(question_id),
-        "video_link": video_link
-    })
+        # Ensure student exists
+        student = await students_collection.find_one({"_id": student_id})
+        if not student:
+            return {"success": False, "error": "Student not found."}
 
-    if existing:
-        #update vote
-        await votes_collection.update_one(
-            {"_id" : existing["_id"]},
-            {"$set": {"vote_type": vote_type, "timestamp": vote_doc["timestamp"]}}
+        filter_doc = {
+            "student_id": student_id,
+            "course_id": str(course_id),
+            "question_id": str(question_id),
+            "video_link": video_link.strip()
+        }
+
+        now = datetime.now(timezone.utc)
+
+        update_doc = {
+            "$set": {
+                "vote_type": vote_type,
+                "timestamp": now
+            },
+            "$setOnInsert": {
+                "student_id": student_id,
+                "course_id": str(course_id),
+                "question_id": str(question_id),
+                "video_link": video_link.strip()
+            }
+        }
+
+        result = await video_votes_collection.update_one(
+            filter_doc,
+            update_doc,
+            upsert=True
         )
-        return {"success": True, "message":"Vote updated successfully."}
-    
-    #otherwise insert new vote
-    await votes_collection.insert_one(vote_doc)
-    return {"success": True, "message": "Vote recorded successfully."}
 
+        if result.upserted_id:
+            return {
+                "success": True,
+                "message": "Vote recorded successfully."
+            }
+
+        return {
+            "success": True,
+            "message": "Vote updated successfully."
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to record vote: {str(e)}"
+        }
