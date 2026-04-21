@@ -133,6 +133,7 @@ async def update_student_mastery(submission_data: dict) -> None:
                     'total_attempted': stats['total']
                 },
                 '$set': {
+                    'skill_name': skill_id,
                     'last_updated': datetime.utcnow()
                 }
             }

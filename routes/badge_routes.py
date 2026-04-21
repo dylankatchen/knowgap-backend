@@ -4,7 +4,8 @@ from services.badge_service import (
     get_user_badges,
     get_badge_details,
     share_badge,
-    get_badge_progress
+    get_badge_progress,
+    get_public_student_earned_badges
 )
 
 badge_bp = Blueprint('badge', __name__)
@@ -382,3 +383,26 @@ async def instructor_web_linked_badge_route():
             'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500 
+
+@badge_bp.route('/badges/public/student/<student_id>/earned', methods=['GET'])
+async def get_public_student_earned_badges_route(student_id):
+    """Get all earned badges for a specific student publicly. (AchieveUp only)"""
+    try:
+        # Call badge service directly without token verification
+        result = await get_public_student_earned_badges(student_id)
+        
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
