@@ -54,6 +54,8 @@ class Config:
     ACHIEVEUP_CANVAS_QUIZZES_COLLECTION = "AchieveUp_Canvas_Quizzes"
     ACHIEVEUP_CANVAS_QUESTIONS_COLLECTION = "AchieveUp_Canvas_Questions"
     ACHIEVEUP_QUIZ_SUBMISSIONS_COLLECTION = "AchieveUp_Quiz_Submissions"
+    ACHIEVEUP_COURSE_DESCRIPTIONS_COLLECTION = "AchieveUp_Course_Descriptions"
+    ACHIEVEUP_IMPORT_STATUS_COLLECTION = "AchieveUp_Import_Status"
     
     # AchieveUp configuration
     ACHIEVEUP_JWT_SECRET = os.getenv("ACHIEVEUP_JWT_SECRET", "achieveup-secret-key-change-in-production")

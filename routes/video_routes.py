@@ -3,7 +3,8 @@
 from quart import request, jsonify
 from services.video_service import (
     get_assessment_videos, get_course_videos, update_course_videos,
-    update_video_link, add_video, remove_video, update_videos_for_filter
+    update_video_link, add_video, remove_video, update_videos_for_filter,
+    vote_video, get_vote_counts, get_student_votes
 )
 from utils.youtube_utils import fetch_video_transcript, extract_video_id
 
@@ -206,6 +207,75 @@ def init_video_routes(app):
             else:
                 return jsonify(result), 404
                 
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": f"Internal server error: {str(e)}"
+            }), 500
+
+    @app.route('/vote-video', methods=['POST', 'OPTIONS'])
+    async def vote_video_route():
+        if request.method == 'OPTIONS':
+            return '', 204
+
+        try:
+            data = await request.get_json()
+
+            if not data:
+                return jsonify({"success": False, "error": "No JSON data received"}), 400
+
+            required_fields = ("student_id", "course_id", "question_id", "video_link", "vote_type")
+            if not all(field in data for field in required_fields):
+                return jsonify({"success": False, "error": "Missing required parameters"}), 400
+
+            result = await vote_video(
+                data["student_id"],
+                data["course_id"],
+                data["question_id"],
+                data["video_link"],
+                data["vote_type"]
+            )
+
+            if result.get("success"):
+                return jsonify(result), 200
+            else:
+                return jsonify(result), 400
+
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": f"Internal server error: {str(e)}"
+            }), 500
+
+    @app.route('/get-video-votes', methods=['POST', 'OPTIONS'])
+    async def get_video_votes_route():
+        if request.method == 'OPTIONS':
+            return '', 204
+
+        try:
+            data = await request.get_json()
+
+            if not data:
+                return jsonify({"success": False, "error": "No JSON data received"}), 400
+
+            if not all(k in data for k in ("course_id", "question_ids")):
+                return jsonify({"success": False, "error": "Missing required parameters"}), 400
+
+            counts = await get_vote_counts(data['course_id'], data['question_ids'])
+
+            student_votes = {}
+            if data.get('student_id'):
+                student_votes = await get_student_votes(
+                    data['student_id'],
+                    data['course_id'],
+                    data['question_ids']
+                )
+
+            return jsonify({
+                "counts": counts,
+                "student_votes": student_votes
+            }), 200
+
         except Exception as e:
             return jsonify({
                 "success": False,

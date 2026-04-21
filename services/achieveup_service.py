@@ -7,6 +7,27 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from services.achieveup_auth_service import achieveup_verify_token
 from config import Config
 
+import re
+from html import unescape
+
+def normalize_quiz_title(title: str) -> str:
+    if not title:
+        return ''
+    return re.sub(r'\s+', ' ', title).strip().lower()
+
+def strip_html(text: str) -> str:
+    if not text:
+        return ''
+    text = re.sub(r'<[^>]+>', ' ', text)
+    return unescape(text)
+
+def normalize_question_text(text: str) -> str:
+    text = strip_html(text)
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -23,6 +44,10 @@ achieveup_question_skills_collection = db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLE
 achieveup_badges_collection = db[Config.ACHIEVEUP_BADGES_COLLECTION]
 achieveup_progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
 achieveup_analytics_collection = db[Config.ACHIEVEUP_ANALYTICS_COLLECTION]
+achieveup_course_descriptions_collection = db[Config.ACHIEVEUP_COURSE_DESCRIPTIONS_COLLECTION]
+achieveup_import_status_collection = db[Config.ACHIEVEUP_IMPORT_STATUS_COLLECTION]
+
+MAX_COURSE_DESCRIPTION_LENGTH = 12000
 
 async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skills: list) -> dict:
     """Create skill matrix for a course."""
@@ -44,7 +69,7 @@ async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skil
                 'message': 'Instructor access required',
                 'statusCode': 403
             }
-        
+        logger.info("#########################################")
         # Check if matrix name already exists for this course (allow multiple matrices per course)
         existing_matrix = await achieveup_skill_matrices_collection.find_one({
             'course_id': course_id, 
@@ -204,6 +229,115 @@ async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
         logger.error(f"Get all skill matrices by course error: {str(e)}")
         import traceback
         traceback.print_exc()
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def get_course_description(token: str, course_id: str) -> dict:
+    """Get persisted instructor course description used as AI context."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        user_role = user.get('role')
+        canvas_token_type = user.get('canvasTokenType', 'student')
+
+        if user_role != 'instructor' or canvas_token_type != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        doc = await achieveup_course_descriptions_collection.find_one(
+            {
+                'course_id': str(course_id),
+                'instructor_id': user['id']
+            },
+            {
+                '_id': 0
+            }
+        )
+
+        if not doc:
+            return {
+                'course_id': str(course_id),
+                'description': '',
+                'updated_at': None
+            }
+
+        return {
+            'course_id': doc.get('course_id', str(course_id)),
+            'description': doc.get('description', ''),
+            'updated_at': doc.get('updated_at').isoformat() if doc.get('updated_at') else None
+        }
+
+    except Exception as e:
+        logger.error(f"Get course description error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+async def upsert_course_description(token: str, course_id: str, description: str) -> dict:
+    """Create or update persisted instructor course description used as AI context."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        user_role = user.get('role')
+        canvas_token_type = user.get('canvasTokenType', 'student')
+
+        if user_role != 'instructor' or canvas_token_type != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        if not isinstance(description, str):
+            return {
+                'error': 'Invalid request',
+                'message': 'description must be a string',
+                'statusCode': 400
+            }
+
+        if len(description) > MAX_COURSE_DESCRIPTION_LENGTH:
+            return {
+                'error': 'Validation failed',
+                'message': f'description cannot exceed {MAX_COURSE_DESCRIPTION_LENGTH} characters',
+                'statusCode': 400
+            }
+
+        now = datetime.utcnow()
+        query = {
+            'course_id': str(course_id),
+            'instructor_id': user['id']
+        }
+
+        await achieveup_course_descriptions_collection.update_one(
+            query,
+            {
+                '$set': {
+                    'course_id': str(course_id),
+                    'instructor_id': user['id'],
+                    'description': description,
+                    'updated_at': now
+                },
+                '$setOnInsert': {
+                    'created_at': now
+                }
+            },
+            upsert=True
+        )
+
+        return {
+            'course_id': str(course_id),
+            'description': description,
+            'updated_at': now.isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Upsert course description error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def assign_skills_to_questions(token: str, course_id: str, question_skills: dict) -> dict:
@@ -1172,6 +1306,8 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         user_result = await achieveup_verify_token(token)
         if 'error' in user_result:
             return user_result
+
+        user = user_result['user']
         
         # Use OpenAI directly with proper async syntax
         from openai import AsyncOpenAI
@@ -1181,10 +1317,30 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         
         course_name = course_data.get('courseName', '')
         course_code = course_data.get('courseCode', '')
-        course_description = course_data.get('courseDescription', 'N/A')
-        print("Course name for AI:", course_name, "Hey Look at me")
-        print("Course code for AI:", course_code, "Hey Look at me")
-        print("Course Description for AI:", course_description, "Hey Look at me")
+        course_id = str(course_data.get('courseId', ''))
+
+        stored_description = ''
+        if course_id:
+            stored_doc = await achieveup_course_descriptions_collection.find_one(
+                {
+                    'course_id': course_id,
+                    'instructor_id': user['id']
+                },
+                {
+                    'description': 1,
+                    '_id': 0
+                }
+            )
+            if stored_doc and isinstance(stored_doc.get('description'), str):
+                stored_description = stored_doc['description'].strip()
+
+        request_description = (course_data.get('courseDescription') or '').strip()
+        course_description = stored_description or request_description or 'N/A'
+        logger.info(
+            "AI skill suggestion course description source for course %s: %s",
+            course_id,
+            'stored' if stored_description else 'request'
+        )
         
         prompt = f"""
         Generate 8-12 specific, measurable skills for this course. They should be about 3-5 words.
@@ -1224,7 +1380,8 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
             'courseName': course_name,
             'skills': skills,  # Changed from 'suggestedSkills' to match frontend expectation
             'generatedAt': datetime.utcnow().isoformat(),
-            'method': 'ai'
+            'method': 'ai',
+            'courseDescriptionSource': 'stored' if stored_description else 'request'
         }
         
     except Exception as e:
@@ -1590,4 +1747,266 @@ async def delete_skill_matrix(token: str, matrix_id: str) -> dict:
         logger.error(f"Delete skill matrix error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
- 
+async def import_matrices_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
+    
+    source_matrices = await get_all_skill_matrices_by_course(token,source_course_id)
+    
+    if not source_matrices:
+        return {
+            'error': 'No matrices found',
+            'message': f'No skill matrices found for source course {source_course_id}',
+            'statusCode': 404
+        }
+
+    imported = []
+    matrices = source_matrices.get('matrices', [])
+    for matrix in matrices:
+        matrix_name = matrix.get('matrix_name') + ' (Imported Skills Matrix)'
+        skills = matrix.get('skills', []) or []
+        created = await create_skill_matrix(token, target_course_id,matrix_name, skills)
+        imported.append(created)
+
+    await achieveup_import_status_collection.update_one(
+        {'target_course_id': target_course_id},
+        {
+            '$set': {
+                'source_course_id': source_course_id,
+                'target_course_id': target_course_id,
+                'matrices_imported': True,
+                'updated_at': datetime.utcnow()
+            },
+            '$setOnInsert': {
+                'assignments_imported': False,
+                'created_at': datetime.utcnow()
+            }
+        },
+        upsert=True
+    )    
+
+    return imported
+
+
+def strip_html(text: str) -> str:
+    if not text:
+        return ''
+    text = re.sub(r'<[^>]+>', ' ', text)
+    return unescape(text)
+
+def normalize_text(text: str) -> str:
+    text = strip_html(text).lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+async def import_skill_setting_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
+    """Import question skill assignments from source course to target course by matching quiz names and question text."""
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        user = user_result['user']
+        if user['role'] != 'instructor' or user.get('canvasTokenType') != 'instructor':
+            return {
+                'error': 'Access denied',
+                'message': 'Instructor access required',
+                'statusCode': 403
+            }
+
+        from services.achieveup_auth_service import get_user_canvas_token
+        from services.achieveup_canvas_service import get_instructor_quiz_questions, get_instructor_course_quizzes
+
+        canvas_token = await get_user_canvas_token(user_id)
+        if not canvas_token:
+            return {
+                'error': 'No Canvas token',
+                'message': 'No Canvas API token found for user',
+                'statusCode': 400
+            }
+
+        source_quizzes = await get_instructor_course_quizzes(canvas_token, source_course_id)
+        target_quizzes = await get_instructor_course_quizzes(canvas_token, target_course_id)
+
+        if isinstance(source_quizzes, dict) and 'error' in source_quizzes:
+            return source_quizzes
+        if isinstance(target_quizzes, dict) and 'error' in target_quizzes:
+            return target_quizzes
+
+        # map target quizzes by normalized title
+        target_quiz_map = {
+            normalize_text(q.get('title', '')): q
+            for q in target_quizzes
+        }
+
+        imported_count = 0
+        matched_quizzes = 0
+        matched_questions = 0
+        details = []
+
+        for source_quiz in source_quizzes:
+            source_quiz_title = source_quiz.get('title', '')
+            source_quiz_key = normalize_text(source_quiz_title)
+
+            target_quiz = target_quiz_map.get(source_quiz_key)
+            if not target_quiz:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'No matching target quiz found'
+                })
+                continue
+
+            matched_quizzes += 1
+
+            source_quiz_id = str(source_quiz.get('id'))
+            target_quiz_id = str(target_quiz.get('id'))
+
+            source_questions = await get_instructor_quiz_questions(canvas_token, source_quiz_id, source_course_id)
+            target_questions = await get_instructor_quiz_questions(canvas_token, target_quiz_id, target_course_id)
+
+
+            if isinstance(source_questions, dict) and 'error' in source_questions:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'Failed to load source questions'
+                })
+                continue
+
+            if isinstance(target_questions, dict) and 'error' in target_questions:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'Failed to load target questions'
+                })
+                continue
+
+            source_question_ids = [str(q.get('id')) for q in source_questions if q.get('id')]
+            source_assignments_result = await get_assigned_skills(token, source_course_id, source_question_ids)
+
+            if 'error' in source_assignments_result:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'Failed to load source assignments'
+                })
+                continue
+
+            source_assignments = source_assignments_result.get('question_skills', {})
+
+            # target questions by normalized question text
+            target_question_map = {}
+            for tq in target_questions:
+                key = normalize_text(tq.get('question_text', ''))
+                if key and key not in target_question_map:
+                    target_question_map[key] = tq
+
+            target_question_skills = {}
+            quiz_imported_count = 0
+
+            for sq in source_questions:
+                source_qid = str(sq.get('id'))
+                source_skills = source_assignments.get(source_qid, [])
+                if not source_skills:
+                    continue
+
+                source_qtext_key = normalize_text(sq.get('question_text', ''))
+                if not source_qtext_key:
+                    continue
+
+                matched_target_question = target_question_map.get(source_qtext_key)
+                if not matched_target_question:
+                    continue
+
+                target_qid = str(matched_target_question.get('id'))
+                target_question_skills[target_qid] = source_skills
+                quiz_imported_count += 1
+
+            if target_question_skills:
+                save_result = await assign_skills_to_questions(token, target_course_id, target_question_skills)
+                if 'error' in save_result:
+                    details.append({
+                        'quiz_title': source_quiz_title,
+                        'status': 'failed',
+                        'reason': save_result.get('message', save_result.get('error'))
+                    })
+                    continue
+
+                imported_count += len(target_question_skills)
+                matched_questions += quiz_imported_count
+
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'imported',
+                    'matched_questions': quiz_imported_count
+                })
+            else:
+                details.append({
+                    'quiz_title': source_quiz_title,
+                    'status': 'skipped',
+                    'reason': 'No matching assigned questions found'
+                })
+
+        await achieveup_import_status_collection.update_one(
+            {'target_course_id': target_course_id},
+            {
+                '$set': {
+                'source_course_id': source_course_id,
+                'target_course_id': target_course_id,
+                'assignments_imported': True,
+                'updated_at': datetime.utcnow()
+                },
+                '$setOnInsert': {
+                'matrices_imported': False,
+                'created_at': datetime.utcnow()
+                }
+            },
+            upsert=True
+        )  
+
+        return {
+            'message': 'Skill assignments imported successfully',
+            'source_course_id': source_course_id,
+            'target_course_id': target_course_id,
+            'matched_quizzes': matched_quizzes,
+            'matched_questions': matched_questions,
+            'imported_count': imported_count,
+            'details': details
+        }
+
+          
+
+    except Exception as e:
+        logger.error(f"Import skill assignment error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'error': 'Internal server error',
+            'message': str(e),
+            'statusCode': 500
+        }
+    
+async def get_import_status(token: str, course_id: str) -> dict:
+    try:
+        user_result = await achieveup_verify_token(token)
+        if 'error' in user_result:
+            return user_result
+
+        status = await achieveup_import_status_collection.find_one(
+            {'target_course_id': course_id},
+            {'_id': 0}
+        )
+
+        if not status:
+            return {
+                'target_course_id': course_id,
+                'matrices_imported': False,
+                'assignments_imported': False
+            }
+
+        return status
+
+    except Exception as e:
+        logger.error(f"Get import status error: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+    

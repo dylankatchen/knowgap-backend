@@ -3,6 +3,7 @@
 import aiohttp
 import ssl
 import logging
+import re
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
@@ -47,6 +48,52 @@ def create_canvas_session():
     else:
         # Development: use custom SSL context
         return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
+
+
+def _extract_next_canvas_link(link_header: str) -> str:
+    """Extract the Canvas pagination next URL from an RFC 5988 Link header."""
+    if not link_header:
+        return None
+
+    for part in link_header.split(','):
+        if 'rel="next"' not in part:
+            continue
+        match = re.search(r'<([^>]+)>', part)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+async def _fetch_all_canvas_pages(session, url: str, headers: dict, params: dict = None):
+    """Fetch all pages from a Canvas endpoint and return a combined list payload."""
+    all_items = []
+    next_url = url
+    request_params = params or {}
+    page_count = 0
+
+    while next_url:
+        page_count += 1
+        async with session.get(next_url, headers=headers, params=request_params) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                logger.error(f"Canvas pagination request failed: {response.status} - {error_text}")
+                return None, {
+                    'error': f'Failed to fetch instructor courses: {response.status}',
+                    'statusCode': response.status
+                }
+
+            payload = await response.json()
+            if isinstance(payload, list):
+                all_items.extend(payload)
+            elif payload:
+                all_items.append(payload)
+
+            next_url = _extract_next_canvas_link(response.headers.get('Link', ''))
+            request_params = None
+
+    logger.info(f"Fetched {len(all_items)} Canvas items across {page_count} page(s)")
+    return all_items, None
 
 # MongoDB setup for AchieveUp Canvas data (separate from KnowGap)
 # Only bypass SSL verification in development
@@ -515,22 +562,20 @@ async def get_instructor_courses(canvas_token: str) -> dict:
         url = f"{CANVAS_API_URL}/courses"
         params = {'enrollment_type': 'teacher', 'per_page': 100}
         async with create_canvas_session() as session:
-            async with session.get(url, headers=headers, params=params) as response:
-                if response.status == 200:
-                    courses_data = await response.json()
-                    courses = []
-                    for course in courses_data:
-                        courses.append({
-                            'id': str(course.get('id')),
-                            'name': course.get('name', ''),
-                            'code': course.get('course_code', '')
-                            #add code here 'description': course.get('public_description', '')
-                        })
-                    return courses
-                else:
-                    error_text = await response.text()
-                    logger.error(f"Canvas instructor courses error: {response.status} - {error_text}")
-                    return {'error': f'Failed to fetch instructor courses: {response.status}', 'statusCode': response.status}
+            courses_data, error = await _fetch_all_canvas_pages(session, url, headers, params)
+            if error:
+                return error
+
+            courses = []
+            for course in courses_data:
+                courses.append({
+                    'id': str(course.get('id')),
+                    'name': course.get('name', ''),
+                    'code': course.get('course_code', ''),
+                    'term': course.get('enrollment_term_id','')
+                    #add code here 'description': course.get('public_description', '')
+                })
+            return courses
     except Exception as e:
         logger.error(f"Get instructor courses error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
