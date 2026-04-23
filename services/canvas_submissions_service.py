@@ -204,6 +204,7 @@ async def process_submission_data(submission: dict) -> dict:
         processed = {
             'submission_id': str(submission.get('id')),
             'student_id': str(submission.get('user_id')),
+            'student_name': submission.get('user', {}).get('name') or submission.get('user', {}).get('display_name'),
             'quiz_id': str(submission.get('quiz_id')),
             'attempt': submission.get('attempt', 1),
             'score': submission.get('score', 0),
