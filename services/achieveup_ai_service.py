@@ -2,17 +2,14 @@
 
 import logging
 import json
-import os
+import re
 from typing import List, Dict, Any
-from openai import AsyncOpenAI
 from datetime import datetime, timezone
 from config import Config
+from utils.ai_utils import client, AI_MODEL
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-# OpenAI configuration
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY') or Config.OPENAI_KEY
 
 
 async def analyze_questions(questions_data: List[Dict[str, Any]], course_skills: List[str] = None) -> List[Dict[str, Any]]:
@@ -22,8 +19,8 @@ async def analyze_questions(questions_data: List[Dict[str, Any]], course_skills:
     if not course_skills:
         raise ValueError("analyze_questions requires a non-empty course_skills list")
 
-    if not OPENAI_API_KEY: 
-        raise RuntimeError("OpenAI API key is not set. Cannot analyze questions")
+    if not Config.AI_API_KEY or not Config.AI_API_URL:
+        raise RuntimeError("AI gateway key or URL is not set. Cannot analyze questions")
 
     results = []
     batch_size = 20
@@ -51,7 +48,7 @@ async def analyze_questions(questions_data: List[Dict[str, Any]], course_skills:
     return results
 
 async def classify_questions_batch_ai(question_texts: List[str], available_skills: List[str]) -> Dict[str, List[str]]:
-    """Use OpenAI to classify multiple questions at once for efficiency."""
+    """Use the configured AI model to classify multiple questions at once for efficiency."""
     # Prepare numbered list of questions
     questions_formatted = "\n".join([f"{i}. {text[:500]}" for i, text in enumerate(question_texts)])
         
@@ -71,9 +68,8 @@ async def classify_questions_batch_ai(question_texts: List[str], available_skill
     }}
     """
 
-    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=AI_MODEL,
         messages=[
             {"role": "system", "content": "You are an expert at mapping educational content to learning skills. Output only valid JSON."},
             {"role": "user", "content": prompt}
@@ -82,7 +78,9 @@ async def classify_questions_batch_ai(question_texts: List[str], available_skill
     )
 
     content = response.choices[0].message.content.strip()
-    batch_results = json.loads(content)
+    # Pull the JSON object out in case the model wraps it in a code fence or extra text
+    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+    batch_results = json.loads(json_match.group() if json_match else content)
         
     # Clean and validate
     cleaned_results = {}
