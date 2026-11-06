@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from services.achieveup_auth_service import achieveup_verify_token
 from config import Config
 from utils import text_utils
+from utils.ai_utils import client, AI_MODEL
 import re
 from html import unescape
 
@@ -515,12 +516,8 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
 
         user = user_result['user']
         
-        # Use OpenAI directly with proper async syntax
-        from openai import AsyncOpenAI
         import json
-        
-        client = AsyncOpenAI(api_key=Config.OPENAI_API_KEY)
-        
+
         course_name = course_data.get('courseName', '')
         course_code = course_data.get('courseCode', '')
         course_id = str(course_data.get('courseId', ''))
@@ -562,13 +559,13 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         """
         
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=AI_MODEL,
             messages=[
                 {"role": "system", "content": "You are an expert curriculum designer. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             #temperature=0.7,
-            max_completion_tokens=10000
+            max_tokens=10000
         )
         
         ai_response = response.choices[0].message.content.strip()

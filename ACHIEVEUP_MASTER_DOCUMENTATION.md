@@ -30,7 +30,7 @@ AchieveUp is an AI-powered skill tracking system that transforms traditional ass
 ### **Backend (Python Quart)**
 - **Location**: Current repository
 - **Deployment**: Heroku (gen-ai-prime-3ddeabb35bd7.herokuapp.com)
-- **Technology**: Quart, MongoDB, OpenAI API, Canvas LMS Integration
+- **Technology**: Quart, MongoDB, Portkey AI Gateway, Canvas LMS Integration
 
 ---
 
@@ -65,14 +65,13 @@ AchieveUp is an AI-powered skill tracking system that transforms traditional ass
 
 ## 🤖 **AI INTEGRATION**
 
-### **OpenAI Integration**
+### **Portkey Integration**
 ```python
-# Primary AI with GPT-5-mini
+# Primary AI with Gemma 4 31b
 async def generate_ai_skill_suggestions(course_data):
-    response = openai.ChatCompletion.create(
-        model="gpt-5-mini",
-        messages=[{"role": "system", "content": "Expert curriculum designer..."}],
-        #temperature=0.3
+    response = await client.chat.completions.create(
+        model="ai-cluster/gemma-4-31b-it",
+        messages=[{"role": "system", "content": "Expert curriculum designer..."}]
     )
 ```
 
@@ -115,7 +114,8 @@ COURSE_CODE_MAPPINGS = {
 DATABASE_URL=mongodb+srv://...
 JWT_SECRET=your-jwt-secret-key
 ENCRYPTION_KEY=your-fernet-encryption-key
-OPENAI_API_KEY=your-openai-api-key
+AI_API_KEY=your-portkey-gateway-ai-api-key
+AI_API_URL=https://your-portkey-domain.com/api-path
 CANVAS_API_BASE=https://canvas.instructure.com/api/v1
 ```
 
@@ -148,7 +148,7 @@ Multi-factor analysis including:
 ✅ **All Endpoints Tested**
 - Authentication with valid/invalid credentials
 - Canvas integration with real instructor tokens
-- AI services with OpenAI API and fallback logic
+- AI services with Portkey AI Gateway API
 - Analytics with sample data
 - Error handling for all failure scenarios
 
