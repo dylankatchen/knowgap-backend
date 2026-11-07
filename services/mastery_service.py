@@ -77,11 +77,9 @@ class CourseMasteryTally:
         if submission_data.get('student_name'):
             self.student_names[student_id] = submission_data['student_name']
 
-        try:
-            counts = await tally_submission(submission_data)
-        except Exception as e:
-            logger.error(f"Error tallying submission for student {student_id}: {str(e)}")
-            return
+        # Errors propagate: a submission missing from the tally must fail the
+        # sync rather than be swapped in as if the student never took it.
+        counts = await tally_submission(submission_data)
 
         # No await below, so parallel submissions can't interleave these updates.
         for (skill_id, matrix_id), stats in counts.items():

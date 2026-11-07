@@ -99,10 +99,12 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
     """The sync builds new scores off to the side and swaps them in at the end."""
 
     on_progress = None
+    session_get = None
+    add_submission_error = None
 
     async def run_sync(self, quiz_results, submissions=None):
         self.replace = AsyncMock()
-        self.add_submission = AsyncMock()
+        self.add_submission = AsyncMock(side_effect=self.add_submission_error)
         tally = MagicMock()
         tally.add_submission = self.add_submission
         mastery = MagicMock()
@@ -114,6 +116,8 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
         session = MagicMock()
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=False)
+        if self.session_get:
+            session.get = self.session_get
         with patch.object(sync_service, 'get_instructor_course_quizzes', AsyncMock(return_value=quizzes)), \
              patch.object(sync_service, 'get_all_course_submissions',
                           submissions or AsyncMock(side_effect=quiz_results)), \
@@ -175,7 +179,45 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
         result, tally = await self.run_sync([None, None], submissions=quiz)
         self.assertEqual(result['total_errors'], 1)
         self.assertEqual(self.add_submission.await_count, 1)
-        self.replace.assert_awaited_once()
+        # The other quiz was read, but its scores alone aren't swapped in.
+        self.assert_previous_scores_kept(result)
+
+    def assert_previous_scores_kept(self, result):
+        self.assertEqual(result['error'], 'Sync incomplete')
+        self.assertIn('left as they were', result['message'])
+        self.replace.assert_not_called()
+        self.mastery.delete_many.assert_not_called()
+
+    async def test_previous_scores_kept_when_one_quiz_fails_partway(self):
+        quiz_results = [
+            {'submissions': [{'user_id': 's1', 'questions': []}]},
+            {'error': 'Failed to fetch submissions: 503'},
+            {'submissions': [{'user_id': 's2', 'questions': []}]},
+        ]
+        result, _ = await self.run_sync(quiz_results)
+        self.assertEqual(result['total_errors'], 1)
+        self.assert_previous_scores_kept(result)
+
+    async def test_previous_scores_kept_when_a_submissions_answers_cannot_be_read(self):
+        response = MagicMock(status=503, headers={})
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=False)
+        self.session_get = MagicMock(return_value=response)
+        quiz_results = [
+            {'submissions': [{'user_id': 's1', 'questions': []}]},
+            {'submissions': [{'user_id': 's2', 'id': 'sub2'}]},
+        ]
+        result, _ = await self.run_sync(quiz_results)
+        self.assertEqual(result['failed_submissions'], 1)
+        self.assert_previous_scores_kept(result)
+
+    async def test_previous_scores_kept_when_a_submission_cannot_be_tallied(self):
+        quiz_results = [{'submissions': [{'user_id': 's1', 'questions': []},
+                                         {'user_id': 's2', 'questions': []}]}]
+        self.add_submission_error = RuntimeError('db down')
+        result, _ = await self.run_sync(quiz_results)
+        self.assertEqual(result['total_errors'], 1)
+        self.assert_previous_scores_kept(result)
 
     async def test_previous_scores_kept_when_no_quiz_could_be_read(self):
         quiz_results = [{'error': 'Canvas is down'}, {'error': 'Canvas is down'}]

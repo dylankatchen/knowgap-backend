@@ -360,10 +360,12 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str, cour
 
         total_synced = 0
         total_errors = 0
+        # Submissions whose answers couldn't be read. Any of these, or any
+        # quiz error, means the tally is missing scores and must not be used.
+        failed_submissions = 0
         # New scores are built here and swapped in after the last quiz, so
         # the live data is never half-rebuilt.
         tally = CourseMasteryTally()
-        any_quiz_read = False
 
         quizzes_done = 0
 
@@ -381,7 +383,7 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str, cour
         async with create_canvas_session() as session:
 
             async def fetch_and_process_submission(sub):
-                nonlocal total_synced
+                nonlocal total_synced, failed_submissions
                 student_id = sub.get('user_id', 'unknown')
 
                 # Fetch detailed submission data with questions if missing
@@ -398,23 +400,29 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str, cour
                                         questions_data = await q_response.json()
                                         sub['questions'] = questions_data.get('quiz_submission_questions', [])
                                     else:
+                                        failed_submissions += 1
                                         logger.warning(f"Could not fetch questions for submission {submission_id} (student {student_id}): status {q_response.status}")
+                                        return
                         except Exception as e:
+                            failed_submissions += 1
                             logger.error(f"Error fetching questions for submission {submission_id}: {str(e)}")
+                            return
 
                 processed = await process_submission_data(sub)
-                if processed:
-                    processed['course_id'] = str(course_id)
-                    processed['course_name'] = course_name
-                    # Add to the new mastery totals
-                    await tally.add_submission(processed)
-                    # Store raw submission
-                    success = await store_submission_data(course_id, processed)
-                    if success:
-                        total_synced += 1
+                if not processed:
+                    failed_submissions += 1
+                    return
+                processed['course_id'] = str(course_id)
+                processed['course_name'] = course_name
+                # Add to the new mastery totals
+                await tally.add_submission(processed)
+                # Store raw submission
+                success = await store_submission_data(course_id, processed)
+                if success:
+                    total_synced += 1
 
             async def sync_quiz(quiz):
-                nonlocal total_errors, any_quiz_read
+                nonlocal total_errors
                 quiz_id = quiz.get('id')
                 quiz_title = quiz.get('title', 'Unknown')
 
@@ -427,7 +435,6 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str, cour
                     return
 
                 submissions = submissions_result.get('submissions', [])
-                any_quiz_read = True
 
                 # Check if quiz is a new quiz. If it is, get the new quizzes data.
                 if submissions_result.get("is_new_quiz") and submissions:
@@ -463,12 +470,25 @@ async def sync_course_submissions_direct(canvas_token: str, course_id: str, cour
             # Canvas (New Quiz reports especially), which overlaps well.
             await asyncio.gather(*(sync_quiz_in_slot(q) for q in quizzes))
 
-        # Swap the new totals in. If no quiz could be read (e.g. Canvas was
-        # down), keep the previous sync's data rather than wiping it.
-        if any_quiz_read:
-            await replace_course_mastery(course_id, course_name, tally)
-        else:
-            logger.warning(f"No quizzes could be read for course {course_id}; keeping previous mastery data")
+        # Swap the new totals in only if every quiz and submission was read.
+        # A partial tally would replace each student's totals with fewer
+        # quizzes' worth and delete rows for skills only the missing quizzes
+        # cover, so on any Canvas failure keep the previous sync's data.
+        if total_errors or failed_submissions:
+            logger.warning(f"Sync of course {course_id} incomplete ({total_errors} quiz errors, "
+                           f"{failed_submissions} unreadable submissions); keeping previous mastery data")
+            return {
+                'error': 'Sync incomplete',
+                'message': 'Some quiz results could not be read from Canvas, so scores were left '
+                           'as they were. Please try again.',
+                'statusCode': 502,
+                'course_id': course_id,
+                'total_quizzes': len(quizzes),
+                'total_errors': total_errors,
+                'failed_submissions': failed_submissions,
+            }
+
+        await replace_course_mastery(course_id, course_name, tally)
 
         # Check how many mastery docs exist after sync
         mastery_count = await mastery_collection.count_documents({'course_id': str(course_id)})

@@ -24,6 +24,8 @@ class InstructorCanvasErrorTest(unittest.IsolatedAsyncioTestCase):
     body happens to be an error dict."""
 
     def setUp(self):
+        # Instructor in both the token and the users collection, so the test
+        # passes whichever one the route checks.
         users = MagicMock()
         users.find_one = AsyncMock(return_value={'user_id': 'u1', 'canvas_token_type': 'instructor'})
         db = MagicMock()
@@ -32,7 +34,8 @@ class InstructorCanvasErrorTest(unittest.IsolatedAsyncioTestCase):
         client.__getitem__.return_value = db
         for target, value in [
             ('services.achieveup_auth_service.achieveup_verify_token',
-             AsyncMock(return_value={'user': {'id': 'u1'}})),
+             AsyncMock(return_value={'user': {'id': 'u1', 'role': 'instructor',
+                                              'canvasTokenType': 'instructor'}})),
             ('services.achieveup_auth_service.get_user_canvas_token',
              AsyncMock(return_value='canvas-token')),
             ('motor.motor_asyncio.AsyncIOMotorClient', MagicMock(return_value=client)),
