@@ -255,10 +255,13 @@ class SkillMatrixAccessTest(unittest.IsolatedAsyncioTestCase):
 
     # AI skill suggestions
     async def suggest(self, course_id):
-        """Run skill suggestions up to creating the OpenAI client, which
-        stops the run, so a test can tell whether OpenAI would be called."""
-        self.openai = MagicMock(side_effect=RuntimeError('stop before OpenAI'))
-        with patch('openai.AsyncOpenAI', self.openai), patch('traceback.print_exc'):
+        """Run skill suggestions up to the AI call, which stops the run, so a
+        test can tell whether the AI would be called."""
+        self.openai = AsyncMock(side_effect=RuntimeError('stop before the AI call'))
+        descriptions = MagicMock(find_one=AsyncMock(return_value=None))
+        with patch.object(achieveup_service.client.chat.completions, 'create', self.openai), \
+                patch.object(achieveup_service, 'achieveup_course_descriptions_collection', descriptions), \
+                patch('traceback.print_exc'):
             return await achieveup_service.suggest_course_skills_ai(
                 't', {'courseId': course_id, 'courseName': 'Intro', 'courseCode': 'COP1000'})
 

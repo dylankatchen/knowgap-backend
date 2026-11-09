@@ -132,7 +132,7 @@ class StudentDataAccessTest(unittest.IsolatedAsyncioTestCase):
     # AI skill suggestions
     async def test_skill_suggestions_denied_for_student(self):
         self.user = STUDENT
-        with patch('openai.AsyncOpenAI') as openai_client:
+        with patch.object(achieveup_service.client.chat.completions, 'create') as openai_client:
             result = await achieveup_service.suggest_course_skills_ai('t', {'courseId': '100'})
         self.assertEqual(result['statusCode'], 403)
         openai_client.assert_not_called()
