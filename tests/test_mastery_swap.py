@@ -1,5 +1,7 @@
 import asyncio
 import unittest
+
+import aiohttp
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services import canvas_submissions_service as sync_service
@@ -102,6 +104,12 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
     session_get = None
     add_submission_error = None
 
+    def setUp(self):
+        # Retries wait between tries; don't make the tests wait.
+        patcher = patch.object(sync_service, 'RETRY_BASE_DELAY', 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def run_sync(self, quiz_results, submissions=None):
         self.replace = AsyncMock()
         self.add_submission = AsyncMock(side_effect=self.add_submission_error)
@@ -198,17 +206,52 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['total_errors'], 1)
         self.assert_previous_scores_kept(result)
 
-    async def test_previous_scores_kept_when_a_submissions_answers_cannot_be_read(self):
-        response = MagicMock(status=503, headers={})
+    @staticmethod
+    def canvas_response(status, body=None):
+        response = MagicMock(status=status, headers={})
+        response.json = AsyncMock(return_value=body)
+        response.text = AsyncMock(return_value='')
         response.__aenter__ = AsyncMock(return_value=response)
         response.__aexit__ = AsyncMock(return_value=False)
-        self.session_get = MagicMock(return_value=response)
+        return response
+
+    async def test_previous_scores_kept_when_a_submissions_answers_cannot_be_read(self):
+        self.session_get = MagicMock(return_value=self.canvas_response(503))
         quiz_results = [
             {'submissions': [{'user_id': 's1', 'questions': []}]},
             {'submissions': [{'user_id': 's2', 'id': 'sub2'}]},
         ]
         result, _ = await self.run_sync(quiz_results)
         self.assertEqual(result['failed_submissions'], 1)
+        # Tried once, then retried before giving up.
+        self.assertEqual(self.session_get.call_count, sync_service.CANVAS_RETRIES + 1)
+        self.assert_previous_scores_kept(result)
+
+    async def test_a_brief_canvas_failure_is_retried_and_the_sync_completes(self):
+        self.session_get = MagicMock(side_effect=[
+            self.canvas_response(503),
+            self.canvas_response(200, {'quiz_submission_questions': []}),
+        ])
+        quiz_results = [{'submissions': [{'user_id': 's1', 'id': 'sub1'}]}]
+        result, tally = await self.run_sync(quiz_results)
+        self.assertEqual(result['message'], 'Sync completed (Direct)')
+        self.assertEqual(self.session_get.call_count, 2)
+        self.replace.assert_awaited_once_with('100', 'Data Structures', tally)
+
+    async def test_a_dropped_connection_is_retried(self):
+        self.session_get = MagicMock(side_effect=[
+            aiohttp.ClientConnectionError('reset'),
+            self.canvas_response(200, {'quiz_submission_questions': []}),
+        ])
+        quiz_results = [{'submissions': [{'user_id': 's1', 'id': 'sub1'}]}]
+        result, _ = await self.run_sync(quiz_results)
+        self.assertEqual(result['message'], 'Sync completed (Direct)')
+
+    async def test_an_error_a_retry_cannot_fix_is_not_retried(self):
+        self.session_get = MagicMock(return_value=self.canvas_response(403))
+        quiz_results = [{'submissions': [{'user_id': 's1', 'id': 'sub1'}]}]
+        result, _ = await self.run_sync(quiz_results)
+        self.assertEqual(self.session_get.call_count, 1)
         self.assert_previous_scores_kept(result)
 
     async def test_previous_scores_kept_when_a_submission_cannot_be_tallied(self):
