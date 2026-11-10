@@ -46,14 +46,13 @@ Unless noted otherwise, AchieveUp endpoints require an `Authorization: Bearer <J
     - `GET /achieveup/matrix/course/<course_id>` - Gets all skill matrices for a course.
     - `DELETE /achieveup/matrix/delete/<matrix_id>` - Deletes a skill matrix.
     - `POST /achieveup/matrix/import` - Imports all skill matrices from a source course into a target course.
+    - `GET /achieveup/import-status/<course_id>` - Gets whether matrices have been imported into a course.
   - Course descriptions:
     - `GET /achieveup/course-description/<course_id>` - Gets the instructor's saved course description.
     - `PUT /achieveup/course-description/<course_id>` - Saves the instructor's course description (used as AI context).
   - Skill assignment:
     - `POST /achieveup/skills/assign` - Assigns skills to quiz questions.
     - `GET /achieveup/skills/assignments` - Gets the skills assigned to questions in a course.
-    - `POST /achieveup/skills/import` - Imports skill assignments from a source course into a target course.
-    - `GET /achieveup/import-status/<course_id>` - Gets whether matrices and assignments have been imported into a course.
   - AI:
     - `POST /achieveup/ai/suggest-skills` - Suggests skills for a course.
     - `POST /achieveup/ai/analyze-questions` - Analyzes quiz questions and suggests skills for each.

@@ -33,7 +33,6 @@ class ErrorMessageTest(unittest.IsolatedAsyncioTestCase):
              self.assertLogs('routes.achieveup_routes', 'ERROR') as logs:
             for method, path in [
                 ('post', '/achieveup/matrix/import'),
-                ('post', '/achieveup/skills/import'),
                 ('get', '/achieveup/import-status/100'),
             ]:
                 with self.subTest(path=path):
@@ -43,7 +42,7 @@ class ErrorMessageTest(unittest.IsolatedAsyncioTestCase):
                     body = await response.get_json()
                     self.assertEqual(body['message'], 'An unexpected error occurred')
                     self.assertNoDetail(body)
-        self.assertEqual(sum(SECRET in line for line in logs.output), 3)
+        self.assertEqual(sum(SECRET in line for line in logs.output), 2)
 
     async def test_auth_routes_hide_exception_text(self):
         from app import app
@@ -81,15 +80,6 @@ class ErrorMessageTest(unittest.IsolatedAsyncioTestCase):
              patch('traceback.print_exc'), \
              self.assertLogs('services.achieveup_service', 'ERROR') as logs:
             result = await achieveup_service.suggest_course_skills_ai('t', {})
-        self.assertEqual(result['statusCode'], 500)
-        self.assertNoDetail(result)
-        self.assertIn(SECRET, logs.output[0])
-
-    async def test_skills_import_hides_exception_text(self):
-        with patch('services.achieveup_service.require_course_instructor', AsyncMock(side_effect=Exception(SECRET))), \
-             patch('traceback.print_exc'), \
-             self.assertLogs('services.achieveup_service', 'ERROR') as logs:
-            result = await achieveup_service.import_skill_setting_from_course('1', '2', 'u', 't')
         self.assertEqual(result['statusCode'], 500)
         self.assertNoDetail(result)
         self.assertIn(SECRET, logs.output[0])

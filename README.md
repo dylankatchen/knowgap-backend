@@ -14,7 +14,7 @@ The project and its database keep the **KnowGap** name from the original KnowGap
 
 2. **Skill Matrices and Skill Assignment (AchieveUp)**
    - Instructors create one or more skill matrices per course, with AI-suggested skills based on the course description.
-   - Quiz questions are mapped to skills manually or with AI-assisted analysis, and matrices and assignments can be imported from another course.
+   - Quiz questions are mapped to skills manually or with AI-assisted analysis, and matrices can be imported from another course. Skill mappings carry over to a later course on their own when a question's text and answers are unchanged.
 
 3. **Skill Mastery and Badges (AchieveUp)**
    - Student mastery per skill is calculated from Canvas quiz submissions and awarded as tiered badges.

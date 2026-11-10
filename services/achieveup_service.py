@@ -12,7 +12,6 @@ from config import Config
 from utils import text_utils
 from utils.ai_utils import client, AI_MODEL
 import re
-from html import unescape
 
 from mongodb import get_db
 from utils.youtube_utils import resolve_channel
@@ -747,7 +746,6 @@ async def import_matrices_from_course(source_course_id: str, target_course_id: s
                 'updated_at': datetime.now(timezone.utc).replace(tzinfo=None)
             },
             '$setOnInsert': {
-                'assignments_imported': False,
                 'created_at': datetime.now(timezone.utc).replace(tzinfo=None)
             }
         },
@@ -757,209 +755,23 @@ async def import_matrices_from_course(source_course_id: str, target_course_id: s
     return imported
 
 
-def strip_html(text: str) -> str:
-    if not text:
-        return ''
-    text = re.sub(r'<[^>]+>', ' ', text)
-    return unescape(text)
-
-def normalize_text(text: str) -> str:
-    text = strip_html(text).lower()
-    text = re.sub(r'[^\w\s]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-async def import_skill_setting_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
-    """Import question skill assignments from source course to target course by matching quiz names and question text."""
-    try:
-        # Mappings are saved to the target, so the user must teach it now.
-        # Checked once here rather than on every quiz's save below.
-        user, error = await require_course_instructor(token, target_course_id)
-        if error:
-            return error
-
-        from services.achieveup_auth_service import get_user_canvas_token
-        from services.achieveup_canvas_service import get_instructor_quiz_questions, get_instructor_course_quizzes
-
-        canvas_token = await get_user_canvas_token(user_id)
-        if not canvas_token:
-            return {
-                'error': 'No Canvas token',
-                'message': 'No Canvas API token found for user',
-                'statusCode': 400
-            }
-
-        source_quizzes = await get_instructor_course_quizzes(canvas_token, source_course_id)
-        target_quizzes = await get_instructor_course_quizzes(canvas_token, target_course_id)
-
-        if isinstance(source_quizzes, dict) and 'error' in source_quizzes:
-            return source_quizzes
-        if isinstance(target_quizzes, dict) and 'error' in target_quizzes:
-            return target_quizzes
-
-        # map target quizzes by normalized title
-        target_quiz_map = {
-            normalize_text(q.get('title', '')): q
-            for q in target_quizzes
-        }
-
-        imported_count = 0
-        matched_quizzes = 0
-        matched_questions = 0
-        details = []
-
-        for source_quiz in source_quizzes:
-            source_quiz_title = source_quiz.get('title', '')
-            source_quiz_key = normalize_text(source_quiz_title)
-
-            target_quiz = target_quiz_map.get(source_quiz_key)
-            if not target_quiz:
-                details.append({
-                    'quiz_title': source_quiz_title,
-                    'status': 'skipped',
-                    'reason': 'No matching target quiz found'
-                })
-                continue
-
-            matched_quizzes += 1
-
-            source_quiz_id = str(source_quiz.get('id'))
-            target_quiz_id = str(target_quiz.get('id'))
-
-            source_questions = await get_instructor_quiz_questions(canvas_token, source_quiz_id, source_course_id)
-            target_questions = await get_instructor_quiz_questions(canvas_token, target_quiz_id, target_course_id)
-
-
-            if isinstance(source_questions, dict) and 'error' in source_questions:
-                details.append({
-                    'quiz_title': source_quiz_title,
-                    'status': 'skipped',
-                    'reason': 'Failed to load source questions'
-                })
-                continue
-
-            if isinstance(target_questions, dict) and 'error' in target_questions:
-                details.append({
-                    'quiz_title': source_quiz_title,
-                    'status': 'skipped',
-                    'reason': 'Failed to load target questions'
-                })
-                continue
-
-            source_question_ids = [str(q.get('id')) for q in source_questions if q.get('id')]
-            source_assignments_result = await get_assigned_skills(token, source_course_id, source_question_ids)
-
-            if 'error' in source_assignments_result:
-                details.append({
-                    'quiz_title': source_quiz_title,
-                    'status': 'skipped',
-                    'reason': 'Failed to load source assignments'
-                })
-                continue
-
-            source_assignments = source_assignments_result.get('question_skills', {})
-
-            # target questions by normalized question text
-            target_question_map = {}
-            for tq in target_questions:
-                key = normalize_text(tq.get('question_text', ''))
-                if key and key not in target_question_map:
-                    target_question_map[key] = tq
-
-            target_question_skills = {}
-            quiz_imported_count = 0
-
-            for sq in source_questions:
-                source_qid = str(sq.get('id'))
-                source_skills = source_assignments.get(source_qid, [])
-                if not source_skills:
-                    continue
-
-                source_qtext_key = normalize_text(sq.get('question_text', ''))
-                if not source_qtext_key:
-                    continue
-
-                matched_target_question = target_question_map.get(source_qtext_key)
-                if not matched_target_question:
-                    continue
-
-                target_qid = str(matched_target_question.get('id'))
-                target_question_skills[target_qid] = source_skills
-                quiz_imported_count += 1
-
-            if target_question_skills:
-                await _save_question_skills(user['id'], target_course_id, target_question_skills)
-
-                imported_count += len(target_question_skills)
-                matched_questions += quiz_imported_count
-
-                details.append({
-                    'quiz_title': source_quiz_title,
-                    'status': 'imported',
-                    'matched_questions': quiz_imported_count
-                })
-            else:
-                details.append({
-                    'quiz_title': source_quiz_title,
-                    'status': 'skipped',
-                    'reason': 'No matching assigned questions found'
-                })
-
-        await achieveup_import_status_collection.update_one(
-            {'target_course_id': target_course_id},
-            {
-                '$set': {
-                'source_course_id': source_course_id,
-                'target_course_id': target_course_id,
-                'assignments_imported': True,
-                'updated_at': datetime.now(timezone.utc).replace(tzinfo=None)
-                },
-                '$setOnInsert': {
-                'matrices_imported': False,
-                'created_at': datetime.now(timezone.utc).replace(tzinfo=None)
-                }
-            },
-            upsert=True
-        )  
-
-        return {
-            'message': 'Skill assignments imported successfully',
-            'source_course_id': source_course_id,
-            'target_course_id': target_course_id,
-            'matched_quizzes': matched_quizzes,
-            'matched_questions': matched_questions,
-            'imported_count': imported_count,
-            'details': details
-        }
-
-          
-
-    except Exception as e:
-        logger.error(f"Import skill assignment error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {
-            'error': 'Internal server error',
-            'message': 'An unexpected error occurred',
-            'statusCode': 500
-        }
-
 async def get_import_status(token: str, course_id: str) -> dict:
     try:
         user_result = await achieveup_verify_token(token)
         if 'error' in user_result:
             return user_result
 
+        # Older records also have an assignments_imported flag from the
+        # removed skill assignment import, so it's left out here.
         status = await achieveup_import_status_collection.find_one(
             {'target_course_id': course_id},
-            {'_id': 0}
+            {'_id': 0, 'assignments_imported': 0}
         )
 
         if not status:
             return {
                 'target_course_id': course_id,
-                'matrices_imported': False,
-                'assignments_imported': False
+                'matrices_imported': False
             }
 
         return status
