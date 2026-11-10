@@ -255,40 +255,40 @@ class SkillMatrixAccessTest(unittest.IsolatedAsyncioTestCase):
 
     # AI skill suggestions
     async def suggest(self, course_id):
-        """Run skill suggestions up to the AI call, which stops the run, so a
-        test can tell whether the AI would be called."""
-        self.openai = AsyncMock(side_effect=RuntimeError('stop before the AI call'))
+        """Run skill suggestions up to the AI call, which stops the run,
+        so a test can tell whether the AI would be called."""
+        self.ai_call = AsyncMock(side_effect=RuntimeError('stop before AI call'))
         descriptions = MagicMock(find_one=AsyncMock(return_value=None))
-        with patch.object(achieveup_service.client.chat.completions, 'create', self.openai), \
-                patch.object(achieveup_service, 'achieveup_course_descriptions_collection', descriptions), \
+        with patch.object(achieveup_service.client.chat.completions, 'create', self.ai_call), \
+                patch('services.achieveup_service.achieveup_course_descriptions_collection', descriptions), \
                 patch('traceback.print_exc'):
             return await achieveup_service.suggest_course_skills_ai(
                 't', {'courseId': course_id, 'courseName': 'Intro', 'courseCode': 'COP1000'})
 
     async def test_suggest_skills_in_own_course(self):
         await self.suggest('100')
-        self.openai.assert_called_once()
+        self.ai_call.assert_awaited_once()
 
     async def test_suggest_skills_in_past_course(self):
         # Nothing is saved, and the matrix creator lists past courses too.
         await self.suggest('50')
-        self.openai.assert_called_once()
+        self.ai_call.assert_awaited_once()
 
     async def test_suggest_skills_denied_for_other_course(self):
         result = await self.suggest('999')
         self.assertEqual(result['statusCode'], 403)
-        self.openai.assert_not_called()
+        self.ai_call.assert_not_awaited()
 
     async def test_suggest_skills_denied_without_course(self):
         result = await self.suggest(None)
         self.assertEqual(result['statusCode'], 400)
-        self.openai.assert_not_called()
+        self.ai_call.assert_not_awaited()
 
     async def test_suggest_skills_denied_for_student(self):
         self.user = STUDENT
         result = await self.suggest('100')
         self.assertEqual(result['statusCode'], 403)
-        self.openai.assert_not_called()
+        self.ai_call.assert_not_awaited()
 
 
 class SkillMappingAccessTest(unittest.IsolatedAsyncioTestCase):

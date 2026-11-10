@@ -207,10 +207,10 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
         self.assert_previous_scores_kept(result)
 
     @staticmethod
-    def canvas_response(status, body=None):
+    def canvas_response(status, body=None, text=''):
         response = MagicMock(status=status, headers={})
         response.json = AsyncMock(return_value=body)
-        response.text = AsyncMock(return_value='')
+        response.text = AsyncMock(return_value=text)
         response.__aenter__ = AsyncMock(return_value=response)
         response.__aexit__ = AsyncMock(return_value=False)
         return response
@@ -247,6 +247,17 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
         result, _ = await self.run_sync(quiz_results)
         self.assertEqual(result['message'], 'Sync completed (Direct)')
 
+    async def test_canvas_rate_limit_403_is_retried(self):
+        # Canvas rate-limits with a 403, not a 429.
+        self.session_get = MagicMock(side_effect=[
+            self.canvas_response(403, text='403 Forbidden (Rate Limit Exceeded)'),
+            self.canvas_response(200, {'quiz_submission_questions': []}),
+        ])
+        quiz_results = [{'submissions': [{'user_id': 's1', 'id': 'sub1'}]}]
+        result, _ = await self.run_sync(quiz_results)
+        self.assertEqual(result['message'], 'Sync completed (Direct)')
+        self.assertEqual(self.session_get.call_count, 2)
+
     async def test_an_error_a_retry_cannot_fix_is_not_retried(self):
         self.session_get = MagicMock(return_value=self.canvas_response(403))
         quiz_results = [{'submissions': [{'user_id': 's1', 'id': 'sub1'}]}]
@@ -268,6 +279,34 @@ class SyncSwapTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['total_errors'], 2)
         self.replace.assert_not_called()
         self.mastery.delete_many.assert_not_called()
+
+
+
+class NewQuizRetryTest(unittest.IsolatedAsyncioTestCase):
+    """New Quiz reports take several Canvas calls; each retries brief failures."""
+
+    async def test_report_survives_a_brief_failure_on_each_call(self):
+        response = SyncSwapTest.canvas_response
+        items = [{'id': 'i1', 'position': 1, 'points_possible': 1, 'entry': {'item_body': 'Q1'}}]
+        report = 'ID,Attempt,ItemID,a,b,c,d\ns1,1,i1,,,1,Graded\n'
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(side_effect=[
+            response(503), response(200, items),
+            response(403, text='403 Forbidden (Rate Limit Exceeded)'), response(200, text=report),
+        ])
+        session.post = MagicMock(side_effect=[
+            response(502),
+            response(200, {'progress': {'workflow_state': 'completed', 'results': {'url': 'https://file'}}}),
+        ])
+        with patch.object(sync_service, 'RETRY_BASE_DELAY', 0), \
+                patch.object(sync_service, 'create_canvas_session', MagicMock(return_value=session)):
+            result = await sync_service.get_new_quiz_data('canvas-token', '100', 'q1')
+
+        self.assertEqual(result, {'results': {'s1': [{'id': 'i1', 'question_text': 'Q1', 'correct': True}]}})
+        self.assertEqual(session.get.call_count, 4)
+        self.assertEqual(session.post.call_count, 2)
 
 
 if __name__ == '__main__':

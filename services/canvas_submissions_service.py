@@ -55,7 +55,8 @@ async def check_rate_limit(response):
 
 
 # Canvas answers worth trying again: rate limiting and brief server trouble.
-# Anything else (401, 403, 404...) won't change on a retry.
+# Anything else (401, 403, 404...) won't change on a retry, except Canvas's
+# own rate limit, which comes back as a 403 (see is_rate_limited).
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 # Two retries (three tries) covers a brief Canvas hiccup without dragging out
 # a sync when Canvas is really down: at most about 3s extra per request.
@@ -63,28 +64,44 @@ CANVAS_RETRIES = 2
 RETRY_BASE_DELAY = 1  # seconds, doubled after each failed try
 
 
-async def canvas_get_json(session, url: str, headers: dict, params: dict = None):
-    """
-    GET a Canvas URL, retrying brief failures.
+def is_rate_limited(status: int, body: str) -> bool:
+    """Canvas answers a throttled request with 403 "Rate Limit Exceeded", not 429."""
+    return status == 403 and 'Rate Limit Exceeded' in body
 
-    Returns (status, body, headers): the parsed JSON when the status is 200,
-    the response text otherwise. A connection error on the last try is raised.
+
+async def canvas_request(session, method: str, url: str, headers: dict, params: dict = None,
+                         data: dict = None, ok_statuses=(200,), as_text: bool = False):
     """
+    Send a Canvas request, retrying brief failures.
+
+    Returns (status, body, headers): the parsed JSON (or text, with as_text)
+    when the status is in ok_statuses, the response text otherwise. A
+    connection error on the last try is raised.
+    """
+    send = getattr(session, method.lower())
     for attempt in range(CANVAS_RETRIES + 1):
         last_try = attempt == CANVAS_RETRIES
         try:
-            async with session.get(url, headers=headers, params=params) as response:
+            async with send(url, headers=headers, params=params, data=data) as response:
                 await check_rate_limit(response)
-                if response.status == 200:
-                    return response.status, await response.json(), response.headers
-                if last_try or response.status not in RETRYABLE_STATUSES:
-                    return response.status, await response.text(), response.headers
+                if response.status in ok_statuses:
+                    body = await response.text(encoding='utf-8') if as_text else await response.json()
+                    return response.status, body, response.headers
+                body = await response.text()
+                retryable = response.status in RETRYABLE_STATUSES or is_rate_limited(response.status, body)
+                if last_try or not retryable:
+                    return response.status, body, response.headers
                 logger.warning(f"Canvas returned {response.status} for {url}; retrying")
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if last_try:
                 raise
             logger.warning(f"Canvas request to {url} failed ({e}); retrying")
         await asyncio.sleep(RETRY_BASE_DELAY * 2 ** attempt)
+
+
+async def canvas_get_json(session, url: str, headers: dict, params: dict = None):
+    """GET a Canvas URL with canvas_request's retries."""
+    return await canvas_request(session, 'GET', url, headers, params=params)
 
 
 async def get_all_course_submissions(canvas_token: str, course_id: str, quiz_id: str) -> dict:
@@ -599,17 +616,15 @@ async def get_new_quiz_data(canvas_token: str, course_id: str, quiz_id: str) -> 
 
         # Get quiz questions for a new quiz.
         async with create_canvas_session() as session:
-            async with session.get(f"{url}/items", headers=headers, params={"per_page": 100}) as res:
-                if res.status != 200:
-                    return {"error": f"Failed to get new quiz items: {res.status}", "statusCode": res.status}
-                
-                quiz_data: list = await res.json()
+            status, quiz_data, _ = await canvas_get_json(session, f"{url}/items", headers, {"per_page": 100})
+            if status != 200:
+                return {"error": f"Failed to get new quiz items: {status}", "statusCode": status}
 
-                items: list = [item for item in quiz_data if item.get("entry_type") != "Stimulus"]
+            items: list = [item for item in quiz_data if item.get("entry_type") != "Stimulus"]
 
-                # Sort question items to align with report questions later.
-                items_by_position: dict = {item.get("position"): item for item in items}
-                items = [items_by_position[position] for position in sorted(items_by_position)]
+            # Sort question items to align with report questions later.
+            items_by_position: dict = {item.get("position"): item for item in items}
+            items = [items_by_position[position] for position in sorted(items_by_position)]
 
             # Request body to get new quiz report.
             canvas_quiz_report_request: dict = {
@@ -618,36 +633,37 @@ async def get_new_quiz_data(canvas_token: str, course_id: str, quiz_id: str) -> 
             }
 
 
-            async with session.post(f"{url}/reports", headers=headers, data=canvas_quiz_report_request) as res:
-                if res.status not in (200, 201):
-                    return {"error": f"Failed to request new quiz report: {res.status}", "statusCode": res.status}
-                
-                progress = await res.json()
+            status, progress, _ = await canvas_request(
+                session, 'POST', f"{url}/reports", headers,
+                data=canvas_quiz_report_request, ok_statuses=(200, 201))
+            if status not in (200, 201):
+                return {"error": f"Failed to request new quiz report: {status}", "statusCode": status}
 
-                report_progress: dict = progress.get("progress", {})
+            report_progress: dict = progress.get("progress", {})
 
-                # Repeatedly check report status.
-                for i in range(120):
+            # Repeatedly check report status.
+            for i in range(120):
 
-                    # Check if report is still generating.
-                    if report_progress.get("workflow_state") not in ["completed", "failed"]:
-                        await asyncio.sleep(3)
-                        async with session.get(report_progress.get("url"), headers=headers) as resp:
-                            report_progress = await resp.json()
+                # Check if report is still generating.
+                if report_progress.get("workflow_state") not in ["completed", "failed"]:
+                    await asyncio.sleep(3)
+                    status, progress_data, _ = await canvas_get_json(session, report_progress.get("url"), headers)
+                    # A failed check keeps the last known state and tries again next time.
+                    if status == 200:
+                        report_progress = progress_data
 
-                report_file_url: str = (report_progress.get("results") or {}).get("url", "")
+            report_file_url: str = (report_progress.get("results") or {}).get("url", "")
 
-                if report_progress.get("workflow_state", "") != "completed" or not report_file_url:
-                    return {"error": "New quiz report did not finish.", "statusCode": 502}
-                
-                # Download new quiz report.
-                async with session.get(report_file_url, headers=headers) as res:
-                    report_data: str = (await res.text(encoding="utf-8")).lstrip("\ufeff")
+            if report_progress.get("workflow_state", "") != "completed" or not report_file_url:
+                return {"error": "New quiz report did not finish.", "statusCode": 502}
 
-                    if res.status != 200 or report_data.startswith('{"errors"'):
-                        logger.error(f"Failed to download new quiz report for quiz {quiz_id}: {report_data[:300]}")
-                        return {"error": "Failed to download new quiz report.", "statusCode": 502}
-                
+            # Download new quiz report.
+            status, report_data, _ = await canvas_request(session, 'GET', report_file_url, headers, as_text=True)
+            report_data = report_data.lstrip("\ufeff")
+
+            if status != 200 or report_data.startswith('{"errors"'):
+                logger.error(f"Failed to download new quiz report for quiz {quiz_id}: {report_data[:300]}")
+                return {"error": "Failed to download new quiz report.", "statusCode": 502}
 
         # Use CSV to read the report.
         report_file = io.StringIO(report_data)
