@@ -1,0 +1,41 @@
+# Local development stack: backend, frontend and MongoDB.
+# Run from this folder with `docker compose up --build`. Expects the frontend
+# repo to be cloned next to this one, in a folder named `frontend`; if yours has
+# another name, set FRONTEND_DIR in .env (e.g. FRONTEND_DIR=../achieveup-frontend).
+#
+# Every port is published on 127.0.0.1 only, so it can be reached from this
+# computer but not from anyone else on the same network. That matters most for
+# the debugger (5678), which has no password and can run any code in the
+# backend, and for MongoDB (27017), which has no login.
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build: .
+    ports:
+      - "127.0.0.1:5001:5001"
+      - "127.0.0.1:5678:5678"
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+
+  frontend:
+    build: ${FRONTEND_DIR:-../frontend}
+    volumes:
+      - ${FRONTEND_DIR:-../frontend}:/app
+      - /app/node_modules
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:5001
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:

@@ -20,7 +20,7 @@ db = get_db()
 achieveup_users_collection = db[Config.ACHIEVEUP_USERS_COLLECTION]
 
 # JWT configuration
-JWT_SECRET = getattr(Config, 'ACHIEVEUP_JWT_SECRET', 'achieveup-secret-key-change-in-production')
+JWT_SECRET = Config.ACHIEVEUP_JWT_SECRET
 JWT_ALGORITHM = 'HS256'
 JWT_EXPIRATION_HOURS = 24
 

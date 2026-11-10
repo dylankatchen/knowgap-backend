@@ -6,3 +6,6 @@ tests
 *.md
 test_*.py
 .DS_Store
+.git
+venv/
+.venv/

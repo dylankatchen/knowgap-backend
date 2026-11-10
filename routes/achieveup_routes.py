@@ -791,21 +791,10 @@ async def instructor_dashboard_route():
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
         token = auth_header.split(' ')[1]
-        from services.achieveup_auth_service import achieveup_verify_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
-        user_id = user_result['user']['id']
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from config import Config
-        client = AsyncIOMotorClient(
-            Config.DB_CONNECTION_STRING,
-            tlsAllowInvalidCertificates=(Config.ENV == 'development')
-        )
-        db = client[Config.DATABASE]
-        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
-        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
-            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
+        from services.achieveup_auth_service import require_instructor
+        _, error = await require_instructor(token)
+        if error:
+            return jsonify(error), error['statusCode']
         from services.achieveup_service import get_instructor_dashboard
         result = await get_instructor_dashboard(token)
         return jsonify(result), 200
@@ -1193,79 +1182,6 @@ async def import_matrices_route():
 
     except Exception as e:
         logger.error(f"Import matrices route error: {str(e)}")
-        return jsonify({
-            'error': 'Internal server error',
-            'message': 'An unexpected error occurred',
-            'statusCode': 500
-        }), 500
-    
-@achieveup_bp.route('/achieveup/skills/import', methods=['POST'])
-async def import_skills_assignment_route():
-    """Import skill assignments from a source course into a target course."""
-    
-    try:
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({
-                'error': 'Missing token',
-                'message': 'Authorization header with Bearer token is required',
-                'statusCode': 401
-            }), 401
-
-        token = auth_header.split(' ')[1]
-
-        from services.achieveup_auth_service import achieveup_verify_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify({
-                'error': user_result['error'],
-                'message': user_result['error'],
-                'statusCode': user_result['statusCode']
-            }), user_result['statusCode']
-
-        data = await request.get_json()
-        if not data:
-            return jsonify({
-                'error': 'Bad request',
-                'message': 'Request body is required',
-                'statusCode': 400
-            }), 400
-        
-        source_course_id = data.get('source_course_id')
-        target_course_id = data.get('target_course_id')
-        
-        if not source_course_id or not target_course_id:
-            return jsonify({
-                'error': 'Bad request',
-                'message': 'source_course_id and target_course_id are required',
-                'statusCode': 400
-            }), 400
-
-        if source_course_id == target_course_id:
-            return jsonify({
-                'error': 'Bad request',
-                'message': 'Source and target course cannot be the same',
-                'statusCode': 400
-            }), 400
-
-        from services.achieveup_service import import_skill_setting_from_course
-
-        
-
-        result = await import_skill_setting_from_course(
-            source_course_id=source_course_id,
-            target_course_id=target_course_id,
-            user_id=user_result['user']['id'],
-            token=token
-        )
-
-        if 'error' in result:
-            return jsonify(result), result.get('statusCode', 500)
-
-        return jsonify(result), 200
-
-    except Exception as e:
-        logger.error(f"Import skills route error: {str(e)}")
         return jsonify({
             'error': 'Internal server error',
             'message': 'An unexpected error occurred',

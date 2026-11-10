@@ -296,7 +296,6 @@ class SkillMappingAccessTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.question_skills = AsyncMock()
-        self.import_status = AsyncMock()
         self.user = INSTRUCTOR
 
         async def verify_token(token):
@@ -307,20 +306,11 @@ class SkillMappingAccessTest(unittest.IsolatedAsyncioTestCase):
                 return {'valid': True}
             return {'valid': False, 'statusCode': 403, 'message': 'Not your course'}
 
-        quizzes = AsyncMock(return_value=[{'id': 1, 'title': 'Quiz 1'}])
-        questions = AsyncMock(return_value=[{'id': 7, 'question_text': 'What is 2+2?'}])
-        self.canvas_quizzes = quizzes
         for target, value in [
             ('services.achieveup_auth_service.achieveup_verify_token', verify_token),
-            ('services.achieveup_auth_service.get_user_canvas_token', AsyncMock(return_value='canvas-token')),
             ('services.achieveup_service.get_user_canvas_token', AsyncMock(return_value='canvas-token')),
             ('services.achieveup_service.validate_canvas_instructor_for_course', validate),
             ('services.achieveup_service.achieveup_question_skills_collection', self.question_skills),
-            ('services.achieveup_service.achieveup_import_status_collection', self.import_status),
-            ('services.achieveup_canvas_service.get_instructor_course_quizzes', quizzes),
-            ('services.achieveup_canvas_service.get_instructor_quiz_questions', questions),
-            ('services.achieveup_service.get_assigned_skills',
-             AsyncMock(return_value={'question_skills': {'7': ['Addition']}})),
         ]:
             patcher = patch(target, value)
             patcher.start()
@@ -378,33 +368,6 @@ class SkillMappingAccessTest(unittest.IsolatedAsyncioTestCase):
     async def test_assign_checks_access_before_input(self):
         result = await achieveup_service.assign_skills_to_questions('t', '999', {'Q1': [None]})
         self.assertEqual(result['statusCode'], 403)
-
-    # Skills import
-    async def test_skills_import_from_past_course(self):
-        result = await achieveup_service.import_skill_setting_from_course('50', '100', 'inst-1', 't')
-        self.assertEqual(result['imported_count'], 1)
-        self.assertEqual(self.saved_mappings(), [('inst-1', '100', ['Addition'])])
-        self.import_status.update_one.assert_awaited_once()
-
-    async def test_skills_import_denied_into_other_course(self):
-        result = await achieveup_service.import_skill_setting_from_course('50', '999', 'inst-1', 't')
-        self.assertEqual(result['statusCode'], 403)
-        self.canvas_quizzes.assert_not_awaited()
-        self.question_skills.update_one.assert_not_awaited()
-        self.import_status.update_one.assert_not_awaited()
-
-    async def test_skills_import_denied_into_past_course(self):
-        result = await achieveup_service.import_skill_setting_from_course('100', '50', 'inst-1', 't')
-        self.assertEqual(result['statusCode'], 403)
-        self.question_skills.update_one.assert_not_awaited()
-        self.import_status.update_one.assert_not_awaited()
-
-    async def test_skills_import_denied_for_student(self):
-        self.user = STUDENT
-        result = await achieveup_service.import_skill_setting_from_course('50', '100', 'stu-1', 't')
-        self.assertEqual(result['statusCode'], 403)
-        self.question_skills.update_one.assert_not_awaited()
-        self.import_status.update_one.assert_not_awaited()
 
 
 class InstructorDashboardTest(unittest.IsolatedAsyncioTestCase):

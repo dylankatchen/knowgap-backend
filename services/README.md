@@ -26,12 +26,12 @@ The `services` directory is responsible for handling the core business logic and
   - **`is_new_quiz(...)`**: Checks whether a quiz is a New Quiz or a Classic Quiz.
 
 ### 4. `achieveup_service.py`
-- **Purpose**: Core AchieveUp logic: skill matrices, course descriptions, skill assignment, student progress, instructor dashboard, AI analysis, and importing setups between courses.
+- **Purpose**: Core AchieveUp logic: skill matrices, course descriptions, skill assignment, student progress, instructor dashboard, AI analysis, and importing skill matrices between courses.
 - **Key Functions**:
   - **`create_skill_matrix(...)`**, **`update_skill_matrix(...)`**, **`get_all_skill_matrices_by_course(...)`**, **`delete_skill_matrix(...)`**: Manage skill matrices.
-  - **`assign_skills_to_questions(...)`** / **`get_assigned_skills(...)`**: Map quiz questions to skills.
+  - **`assign_skills_to_questions(...)`** / **`get_assigned_skills(...)`**: Map quiz questions to skills. Mappings are saved by the question's content and the instructor, not the course, so a question with the same text and answers in a later course already has its skills. Questions identified by an embedded image, or with no text at all, get new IDs when Canvas copies a course, so they don't carry over.
   - **`suggest_course_skills_ai(...)`** / **`analyze_questions_with_ai(...)`**: AI skill suggestions for a course and for quiz questions.
-  - **`import_matrices_from_course(...)`** / **`import_skill_setting_from_course(...)`**: Copy matrices and skill assignments from one course to another.
+  - **`import_matrices_from_course(...)`**: Copies skill matrices from one course to another.
 
 ### 5. `achieveup_ai_service.py`
 - **Purpose**: Uses a UCF-managed Google Gemma AI model to classify quiz questions into the skills of a skill matrix.

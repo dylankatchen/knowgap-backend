@@ -1,25 +1,16 @@
 import aiohttp
+import certifi
 import ssl
 from config import Config
 
-# Create SSL context based on environment
 def get_ssl_context():
-    """Get SSL context based on environment."""
+    """SSL setting for Canvas requests: always verified, never disabled."""
     if Config.ENV == 'development':
-        try:
-            # Try to use certifi certificates first for security
-            import certifi
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            return ssl_context
-        except Exception as e:
-            # Fallback to disabled verification only if certifi fails
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-            return ssl_context
-    else:
-        # Production: Use default SSL verification (secure)
-        return True  # aiohttp uses True for default SSL verification
+        # Use certifi's certificate bundle, which works even where Python
+        # can't find the computer's own certificates.
+        return ssl.create_default_context(cafile=certifi.where())
+    # Production: aiohttp's default verification against the system certificates
+    return True
 
 def create_canvas_session():
     """Create aiohttp ClientSession with appropriate SSL settings."""
