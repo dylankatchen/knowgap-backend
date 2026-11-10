@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from services.achieveup_canvas_service import (
-    create_canvas_session, CANVAS_API_URL, is_new_quiz, get_instructor_course_quizzes, get_canvas_course_name
+    CANVAS_API_URL, is_new_quiz, get_instructor_course_quizzes, get_canvas_course_name
 )
 from services.skill_tiers import tier_for_score
 from config import Config
@@ -21,7 +21,7 @@ import io
 
 from mongodb import get_db
 from utils import text_utils
-from utils.course_utils import course_id_filter
+from utils.course_utils import course_id_filter, create_canvas_session
 
 # Set up logging
 logger = logging.getLogger(__name__)

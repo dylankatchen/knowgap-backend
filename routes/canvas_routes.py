@@ -179,23 +179,11 @@ async def instructor_courses_route():
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
         token = auth_header.split(' ')[1]
-        from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
-        user_id = user_result['user']['id']
-        # Check instructor token type
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from config import Config
-        client = AsyncIOMotorClient(
-            Config.DB_CONNECTION_STRING,
-            tlsAllowInvalidCertificates=(Config.ENV == 'development')
-        )
-        db = client[Config.DATABASE]
-        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
-        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
-            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
-        canvas_token = await get_user_canvas_token(user_id)
+        from services.achieveup_auth_service import require_instructor, get_user_canvas_token
+        user, error = await require_instructor(token)
+        if error:
+            return jsonify(error), error['statusCode']
+        canvas_token = await get_user_canvas_token(user['id'])
         if not canvas_token:
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_courses
@@ -212,22 +200,11 @@ async def instructor_course_quizzes_route(course_id):
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
         token = auth_header.split(' ')[1]
-        from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
-        user_id = user_result['user']['id']
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from config import Config
-        client = AsyncIOMotorClient(
-            Config.DB_CONNECTION_STRING,
-            tlsAllowInvalidCertificates=(Config.ENV == 'development')
-        )
-        db = client[Config.DATABASE]
-        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
-        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
-            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
-        canvas_token = await get_user_canvas_token(user_id)
+        from services.achieveup_auth_service import require_instructor, get_user_canvas_token
+        user, error = await require_instructor(token)
+        if error:
+            return jsonify(error), error['statusCode']
+        canvas_token = await get_user_canvas_token(user['id'])
         if not canvas_token:
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_course_quizzes
@@ -240,37 +217,15 @@ async def instructor_course_quizzes_route(course_id):
 async def instructor_quiz_questions_route(course_id, quiz_id):
     """Get all questions in a quiz (instructor token required)."""
     try:
-        #debugging 
-        logger.info(f"star route called: /canvas/instructor/courses/{course_id}/quizzes/{quiz_id}/questions")
-
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
         token = auth_header.split(' ')[1]
-        from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
-        user_id = user_result['user']['id']
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from config import Config
-        client = AsyncIOMotorClient(
-            Config.DB_CONNECTION_STRING,
-            tlsAllowInvalidCertificates=(Config.ENV == 'development')
-        )
-        db = client[Config.DATABASE]
-        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
-        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
-            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
-        
-        #course_id = request.args.get('course_id')
-
-        #debugging
-        logger.info(f"star course_id from query params: {course_id}")
-        if not course_id:
-            return jsonify({'error': 'Missing Course_id', 'message': 'course_id query paramenter required', 'statusCode': 400}), 400
-
-        canvas_token = await get_user_canvas_token(user_id)
+        from services.achieveup_auth_service import require_instructor, get_user_canvas_token
+        user, error = await require_instructor(token)
+        if error:
+            return jsonify(error), error['statusCode']
+        canvas_token = await get_user_canvas_token(user['id'])
         if not canvas_token:
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_quiz_questions

@@ -39,7 +39,9 @@ class Config:
     ACHIEVEUP_COURSE_CHANNELS_COLLECTION = "AchieveUp_Course_Channels"
     
     # AchieveUp configuration
-    ACHIEVEUP_JWT_SECRET = os.getenv("ACHIEVEUP_JWT_SECRET", "achieveup-secret-key-change-in-production")
+    # Signs every login token. Required at startup: a built-in default would be
+    # public in this repo, letting anyone forge a token for any account.
+    ACHIEVEUP_JWT_SECRET = os.getenv("ACHIEVEUP_JWT_SECRET")
     
     CANVAS_DOMAIN = os.getenv("CANVAS_DOMAIN", "canvas.instructure.com")
     CANVAS_API_URL = f"https://{CANVAS_DOMAIN}/api/v1"
@@ -77,7 +79,7 @@ class Config:
         missing = [
             var for var in [
                 "DB_CONNECTION_STRING", "HEX_ENCRYPTION_KEY", 
-                "YOUTUBE_API_KEY", "AI_API_KEY", "AI_API_URL"
+                "YOUTUBE_API_KEY", "AI_API_KEY", "AI_API_URL", "ACHIEVEUP_JWT_SECRET"
             ]
             if not getattr(cls, var)
         ]

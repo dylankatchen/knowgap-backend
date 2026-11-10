@@ -2,50 +2,18 @@
 
 import asyncio
 import aiohttp
-import ssl
 import logging
 import re
 from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
 from config import Config
 from utils import text_utils
+from utils.course_utils import create_canvas_session
 from datetime import datetime, timezone
 
 from mongodb import get_db
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-# Create SSL context based on environment
-# DEVELOPMENT: Bypass SSL verification (for local development issues)
-# PRODUCTION: Use proper SSL verification (secure)
-def get_ssl_context():
-    """Get SSL context based on environment."""
-    if Config.ENV == 'development':
-        try:
-            # Try to use certifi certificates first for security
-            import certifi
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            return ssl_context
-        except Exception as e:
-            # Fallback to disabled verification only if certifi fails
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-            return ssl_context
-    else:
-        # Production: Use default SSL verification (secure)
-        logger.info("✅ SSL certificate verification is ENABLED (production mode)")
-        return True  # aiohttp uses True for default SSL verification
-
-def create_canvas_session():
-    """Create aiohttp ClientSession with appropriate SSL settings."""
-    ssl_setting = get_ssl_context()
-    if ssl_setting is True:
-        # Production: use default SSL verification
-        return aiohttp.ClientSession()
-    else:
-        # Development: use custom SSL context
-        return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_setting))
 
 
 def _extract_next_canvas_link(link_header: str) -> str:

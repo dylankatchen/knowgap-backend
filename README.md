@@ -50,7 +50,7 @@ pip install -r requirements.txt
  
 On Windows, if `venv\Scripts\activate` fails in PowerShell with a "running scripts is disabled" error, this is PowerShell's default execution policy, not an issue with the project. Either run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that terminal session before activating, or activate via Command Prompt instead using `venv\Scripts\activate.bat`.
  
-Once the environment is set up, copy `demo.env` to `.env` and fill in real values — a full MongoDB connection string (`DB_CONNECTION_STRING`), an encryption key matching the rest of the team's if you're working against shared data, and any other required variables. The backend will refuse to start unless `DB_CONNECTION_STRING`, `HEX_ENCRYPTION_KEY`, `AI_API_KEY`, `AI_API_URL`, and `YOUTUBE_API_KEY` are all set. Running the backend outside Docker means it will need a MongoDB instance it can actually reach — either a local install or a shared Atlas cluster.
+Once the environment is set up, copy `demo.env` to `.env` and fill in real values — a full MongoDB connection string (`DB_CONNECTION_STRING`), an encryption key matching the rest of the team's if you're working against shared data, and any other required variables. The backend will refuse to start unless `DB_CONNECTION_STRING`, `HEX_ENCRYPTION_KEY`, `AI_API_KEY`, `AI_API_URL`, `YOUTUBE_API_KEY`, and `ACHIEVEUP_JWT_SECRET` are all set. `ACHIEVEUP_JWT_SECRET` signs login tokens; locally any long random string works (for example, the output of `python -c "import secrets; print(secrets.token_hex(32))"`), but never reuse the production value. Running the backend outside Docker means it will need a MongoDB instance it can actually reach — either a local install or a shared Atlas cluster.
  
 ## Running with Docker
  
@@ -58,7 +58,7 @@ Docker is the recommended way to run the full stack (backend, frontend, and Mong
  
 **Folder structure**
  
-The provided `docker-compose.yml` expects `backend` and `frontend` as folders. The docker-compose.yml file should be inside a Docker folder inside the parent directory of both the frontend and backend folder. Check the paths in the compose file against your actual folder layout before running it, and adjust if you get a "file not found" error pointing at the wrong location.
+`docker-compose.yml` lives in this repo. It expects the frontend repo to be cloned next to this one, in a folder named `frontend` (for example `seniordesign/backend` and `seniordesign/frontend`). If your frontend folder has a different name, such as the default `achieveup-frontend` from `git clone`, add `FRONTEND_DIR=../achieveup-frontend` to this folder's `.env`. If you used an older copy of the compose file kept outside the repos, switch to this one and delete the old copy: this one only opens its ports to your own computer (see below). Local MongoDB data from the old copy stays in its own Docker volume and won't show up in the new stack, so you start with an empty local database.
  
 **Backend `.env` for Docker**
  
@@ -73,13 +73,13 @@ ENVIRONMENT=development
  
 **Starting the stack**
  
-From the folder containing `docker-compose.yml`:
+From this backend folder:
  
 ```
 docker compose up --build
 ```
  
-Once running, the backend is reachable at `http://localhost:5001` and the frontend at `http://localhost:3000`. This is also what to point tools like Postman at when testing backend endpoints directly — the containers need to stay running for the API to respond.
+Once running, the backend is reachable at `http://localhost:5001` and the frontend at `http://localhost:3000`. This is also what to point tools like Postman at when testing backend endpoints directly — the containers need to stay running for the API to respond. The backend also runs a debugger on port 5678 that VS Code can attach to, and MongoDB is on port 27017 (for tools like Compass). All four ports only accept connections from your own computer, not from other devices on your network, because the debugger has no password and can run any code in the backend. Keep the `127.0.0.1:` prefix on the ports in `docker-compose.yml`.
  
 To stop everything:
  
@@ -95,7 +95,9 @@ This stops and removes the containers but preserves MongoDB data in the named `m
  
 **PowerShell blocks `venv\Scripts\activate`:** This is PowerShell's execution policy, unrelated to the project. Use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for the current session, or activate via Command Prompt instead.
  
-**`docker compose up` fails with a "file not found" error for `.env` or a build path:** The compose file's relative paths don't match your actual folder layout. Confirm whether `docker-compose.yml` sits alongside `backend`/`frontend` or in its own subfolder, and adjust `./` vs `../` in the compose file accordingly.
+**`docker compose up` fails with a "file not found" error for `.env` or a build path:** Run it from this backend folder, make sure `.env` exists here, and check that the frontend repo is cloned next to this one in a folder named `frontend` (or that `FRONTEND_DIR` in `.env` points at it).
+
+**The frontend doesn't pick up a newly added npm package:** The frontend container keeps its `node_modules` in a Docker volume that survives rebuilds. After frontend dependencies change, run `docker compose up --build -V` once to recreate it.
  
 **Docker error: "Docker Desktop is manually paused":** Resume Docker Desktop from the whale icon in the system tray, or open the Docker Desktop app directly and look for a resume option.
  

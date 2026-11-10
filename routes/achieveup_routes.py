@@ -748,21 +748,10 @@ async def instructor_dashboard_route():
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
         token = auth_header.split(' ')[1]
-        from services.achieveup_auth_service import achieveup_verify_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify({'error': user_result['error'], 'message': user_result['error'], 'statusCode': user_result['statusCode']}), user_result['statusCode']
-        user_id = user_result['user']['id']
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from config import Config
-        client = AsyncIOMotorClient(
-            Config.DB_CONNECTION_STRING,
-            tlsAllowInvalidCertificates=(Config.ENV == 'development')
-        )
-        db = client[Config.DATABASE]
-        user_doc = await db[Config.ACHIEVEUP_USERS_COLLECTION].find_one({'user_id': user_id})
-        if not user_doc or user_doc.get('canvas_token_type', 'student') != 'instructor':
-            return jsonify({'error': 'Forbidden', 'message': 'Instructor token required', 'statusCode': 403}), 403
+        from services.achieveup_auth_service import require_instructor
+        _, error = await require_instructor(token)
+        if error:
+            return jsonify(error), error['statusCode']
         from services.achieveup_service import get_instructor_dashboard
         result = await get_instructor_dashboard(token)
         return jsonify(result), 200
