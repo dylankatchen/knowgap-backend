@@ -478,3 +478,18 @@ async def get_user_canvas_token(user_id: str) -> str:
     except Exception as e:
         logger.error(f"Error getting Canvas token: {str(e)}")
         return None
+
+async def require_instructor(token: str):
+    """Verify token and require instructor access. Returns (user, None) or (None, error_dict)."""
+    user_result = await achieveup_verify_token(token)
+    if 'error' in user_result:
+        return None, user_result
+
+    user = user_result['user']
+    if user.get('role') != 'instructor' or user.get('canvasTokenType') != 'instructor':
+        return None, {
+            'error': 'Access denied',
+            'message': 'Instructor access required',
+            'statusCode': 403
+        }
+    return user, None

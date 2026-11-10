@@ -6,14 +6,21 @@ from datetime import datetime, timezone
 
 from config import Config
 from mongodb import get_db
-from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
+from services.achieveup_auth_service import (
+    achieveup_verify_token,
+    get_user_canvas_token,
+    require_instructor
+)
 from services.achieveup_service import (
     achieveup_question_skills_collection,
     achieveup_skill_matrices_collection,
     achieveup_course_descriptions_collection,
+    get_saved_course_channels,
+    check_course_instructor,
+    require_course_instructor
 )
 from utils.ai_utils import generate_skill_search_topics
-from utils.youtube_utils import fetch_videos_for_topic, get_video_metadata, fetch_video_transcript
+from utils.youtube_utils import fetch_videos_for_topic, get_video_metadata, fetch_video_transcript, fetch_videos_for_topic_and_channel
 
 logger = logging.getLogger(__name__)
 
@@ -42,26 +49,19 @@ def _serialize_video(doc):
         'status': doc.get('status'),
         'added_by': doc.get('added_by'),
         'instructor_verified': doc.get('instructor_verified', False),
+        'prioritize': doc.get('prioritize', False),
         'timestamp_seconds': doc.get('timestamp_seconds'),
         'created_at': doc['created_at'].isoformat() if isinstance(doc.get('created_at'), datetime) else doc.get('created_at'),
         'updated_at': doc['updated_at'].isoformat() if isinstance(doc.get('updated_at'), datetime) else doc.get('updated_at'),
     }
 
 
-async def _require_instructor(token: str):
-    """Verify token and require instructor access. Returns (user, None) or (None, error_dict)."""
-    user_result = await achieveup_verify_token(token)
-    if 'error' in user_result:
-        return None, user_result
-
-    user = user_result['user']
-    if user.get('role') != 'instructor' or user.get('canvasTokenType') != 'instructor':
-        return None, {
-            'error': 'Access denied',
-            'message': 'Instructor access required',
-            'statusCode': 403
-        }
-    return user, None
+def _display_rank(doc):
+    """Sort key: 0 for instructor-added videos, 1 for AI picks from linked
+    channels, 2 for other AI picks (including ones saved before this PR)."""
+    if doc.get('source') == 'manual':
+        return 0
+    return 1 if doc.get('prioritize') else 2
 
 
 async def _resolve_matrix_id(course_id: str, matrix_id: str, skill_name: str) -> str:
@@ -101,6 +101,9 @@ async def get_skill_videos(token: str, course_id: str, skill_name: str, matrix_i
         videos = []
         async for doc in skill_videos_collection.find(query).sort('created_at', 1):
             videos.append(doc)
+        # Instructor-added first, then AI picks from linked channels, then
+        # other AI picks. The sort is stable, so each group stays oldest-first.
+        videos.sort(key=_display_rank)
 
         video_ids = [v['_id'] for v in videos]
         vote_counts = await get_video_vote_counts(course_id, resolved_matrix_id, skill_name, video_ids, user.get('id'))
@@ -126,7 +129,7 @@ async def add_skill_video(token: str, course_id: str, skill_name: str, link: str
                            thumbnail: str = None, source: str = 'manual') -> dict:
     """Instructor adds a video to a skill's curated list."""
     try:
-        user, error = await _require_instructor(token)
+        user, error = await require_instructor(token)
         if error:
             return error
 
@@ -153,6 +156,7 @@ async def add_skill_video(token: str, course_id: str, skill_name: str, link: str
             'channel': channel or 'Unknown Channel',
             'thumbnail': thumbnail or '',
             'source': source,
+            "prioritize": False,
             'status': 'published',
             'added_by': user['id'],
             'created_at': now,
@@ -170,7 +174,7 @@ async def add_skill_video(token: str, course_id: str, skill_name: str, link: str
 async def update_skill_video(token: str, video_id: str, updates: dict) -> dict:
     """Instructor edits a video, or accepts an AI-suggested candidate by flipping its status."""
     try:
-        _, error = await _require_instructor(token)
+        _, error = await require_instructor(token)
         if error:
             return error
 
@@ -201,7 +205,7 @@ async def update_skill_video(token: str, video_id: str, updates: dict) -> dict:
 async def remove_skill_video(token: str, video_id: str) -> dict:
     """Instructor removes a video and its votes."""
     try:
-        _, error = await _require_instructor(token)
+        _, error = await require_instructor(token)
         if error:
             return error
 
@@ -220,10 +224,9 @@ async def remove_skill_video(token: str, video_id: str) -> dict:
 
 async def verify_ai_video(token: str, video_id: str) -> dict:
     """Instructor marks an AI-suggested video as reviewed/approved — this is distinct
-    from `source` (who added it) so it doesn't change other source-gated behavior
-    like the manual-only 'Find Relevant Moment' feature."""
+    from `source` (who added it) so it doesn't change source-gated behavior."""
     try:
-        _, error = await _require_instructor(token)
+        _, error = await require_instructor(token)
         if error:
             return error
 
@@ -252,7 +255,7 @@ async def verify_ai_video(token: str, video_id: str) -> dict:
 
 
 async def generate_ai_video_recommendations(token: str, course_id: str, skill_name: str,
-                                             matrix_id: str = None, count: int = 5) -> dict:
+                                            matrix_id: str = None, count: int = 6) -> dict:
     """Instructor triggers AI-generated video recommendations for a skill.
 
     These publish immediately alongside instructor-added videos — students see both,
@@ -260,7 +263,7 @@ async def generate_ai_video_recommendations(token: str, course_id: str, skill_na
     a separate instructor-approval step.
     """
     try:
-        user, error = await _require_instructor(token)
+        user, error = await require_course_instructor(token, course_id)
         if error:
             return error
 
@@ -311,16 +314,60 @@ async def generate_ai_video_recommendations(token: str, course_id: str, skill_na
             existing_links.add(existing['link'])
 
         candidates = []
-        for topic in topics_result['topics']:
-            videos = await fetch_videos_for_topic(topic, limit=count)
-            for video in videos:
-                if video.get('link') and video['link'] not in existing_links:
-                    existing_links.add(video['link'])
-                    candidates.append(video)
+
+        # A. Get instructor-configured preferred channels for this course.
+        # A plain database read, so a missing Canvas token or a Canvas outage
+        # doesn't block generation.
+        configured_channels = [
+            c['channel_id'] for c in
+            await get_saved_course_channels(course_id, user['id'])]
+
+        # B. Priority Pass: Search using configured channel IDs first
+        if configured_channels:
+            logger.info(f"Prioritizing search across configured channels: {configured_channels}")
+            # Calculate how many videos to request per channel
+            per_channel_limit = max(1, count // len(configured_channels))
+
+            channel_searches: int = 0
+            for topic in topics_result['topics']:
+                if len(candidates) >= count or channel_searches >= Config.MAX_CHANNEL_SEARCHES:
+                    break
+                for channel in configured_channels:
+                    if len(candidates) >= count or channel_searches >= Config.MAX_CHANNEL_SEARCHES:
+                        break
+
+                    channel_searches += 1
+
+                    # Pass the clean 'topic' and 'channel' separately to the YouTube API wrapper
+                    channel_videos = await fetch_videos_for_topic_and_channel(
+                        topic=topic,
+                        channel_id=channel,
+                        limit=per_channel_limit)
+
+                    for video in channel_videos:
+                        if video.get('link') and video['link'] not in existing_links:
+                            video["prioritize"] = True
+                            existing_links.add(video['link'])
+                            candidates.append(video)
+                        if len(candidates) >= count:
+                            break
+
+        # C. Fallback Pass: Standard global search if more candidate videos are still needed
+        if len(candidates) < count:
+            logger.info(f"Fallback to standard YouTube search. Current candidate count: {len(candidates)}/{count}")
+            for topic in topics_result['topics']:
                 if len(candidates) >= count:
                     break
-            if len(candidates) >= count:
-                break
+
+                needed = count - len(candidates)
+                global_videos = await fetch_videos_for_topic(topic=topic, limit=needed)
+
+                for video in global_videos:
+                    if video.get('link') and video['link'] not in existing_links:
+                        existing_links.add(video['link'])
+                        candidates.append(video)
+                    if len(candidates) >= count:
+                        break
 
         # 5. Insert as published — visible to students immediately, tagged ai_suggested
         now = _now()
@@ -336,6 +383,7 @@ async def generate_ai_video_recommendations(token: str, course_id: str, skill_na
                 'channel': video['channel'],
                 'thumbnail': video['thumbnail'],
                 'source': 'ai_suggested',
+                "prioritize": video.get("prioritize", False),
                 'status': 'published',
                 'added_by': user['id'],
                 'created_at': now,
@@ -467,12 +515,10 @@ def _find_best_transcript_bucket(transcript: list, skill_name: str):
 
 
 async def find_relevant_moment(token: str, video_id: str) -> dict:
-    """Instructor opt-in: find the transcript moment most relevant to a manually-added
-    video's skill, and store it as a deep-link timestamp. Not available for AI-suggested
-    videos — those are already short and topic-specific, so a moment search adds cost
-    without much benefit."""
+    """Instructor opt-in: find the transcript moment most relevant to a
+    video's skill, and store it as a deep-link timestamp."""
     try:
-        _, error = await _require_instructor(token)
+        user, error = await require_instructor(token)
         if error:
             return error
 
@@ -480,12 +526,9 @@ async def find_relevant_moment(token: str, video_id: str) -> dict:
         if not video:
             return {'error': 'Video not found', 'statusCode': 404}
 
-        if video.get('source') != 'manual':
-            return {
-                'error': 'Not supported for AI-suggested videos',
-                'message': 'Finding a relevant moment is only available for videos you added yourself.',
-                'statusCode': 400
-            }
+        error = await check_course_instructor(user, video['course_id'])
+        if error:
+            return error
 
         transcript_result = await fetch_video_transcript(video['link'])
         if not transcript_result.get('success'):

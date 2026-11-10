@@ -3,7 +3,11 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from services.achieveup_auth_service import achieveup_verify_token
+from services.achieveup_auth_service import (
+    achieveup_verify_token,
+    get_user_canvas_token,
+    require_instructor,
+)
 from config import Config
 from utils import text_utils
 from utils.ai_utils import client, AI_MODEL
@@ -11,6 +15,10 @@ import re
 from html import unescape
 
 from mongodb import get_db
+from utils.youtube_utils import resolve_channel
+from services.achieveup_canvas_service import (
+    validate_canvas_instructor_for_course,
+)
 
 
 # Set up logging
@@ -25,6 +33,7 @@ achieveup_question_skills_collection = db[Config.ACHIEVEUP_QUESTION_SKILLS_COLLE
 achieveup_progress_collection = db[Config.ACHIEVEUP_PROGRESS_COLLECTION]
 achieveup_course_descriptions_collection = db[Config.ACHIEVEUP_COURSE_DESCRIPTIONS_COLLECTION]
 achieveup_import_status_collection = db[Config.ACHIEVEUP_IMPORT_STATUS_COLLECTION]
+achieveup_course_channels_collection = db[Config.ACHIEVEUP_COURSE_CHANNELS_COLLECTION]
 
 MAX_COURSE_DESCRIPTION_LENGTH = 12000
 
@@ -955,3 +964,139 @@ async def get_import_status(token: str, course_id: str) -> dict:
         logger.error(f"Get import status error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
     
+
+async def check_course_instructor(user: dict, course_id: str):
+    """Return None if Canvas confirms the (already verified) instructor
+    teaches the course, otherwise an error dict."""
+    canvas_token = await get_user_canvas_token(user['id'])
+    if not canvas_token:
+        return {
+            'error': 'Canvas not connected',
+            'message': 'No Canvas API token is linked to your account.',
+            'statusCode': 400
+        }
+
+    course_check = await validate_canvas_instructor_for_course(
+        canvas_token, str(course_id))
+    if not course_check.get('valid'):
+        # Only a denial is a 403. Canvas outages (502/503) and token
+        # problems (400) keep their own status.
+        status = course_check.get('statusCode', 403)
+        return {
+            'error': 'Access denied' if status == 403 else 'Canvas error',
+            'message': course_check.get('message'),
+            'statusCode': status
+        }
+    return None
+
+
+async def require_course_instructor(token: str, course_id: str):
+    """Return (user, None) if the user is an instructor Canvas confirms
+    teaches the course, otherwise (None, error_dict)."""
+    user, error = await require_instructor(token)
+    if error:
+        return None, error
+
+    error = await check_course_instructor(user, course_id)
+    if error:
+        return None, error
+    return user, None
+
+
+async def get_saved_course_channels(course_id: str, instructor_id: str):
+    """Return the channels an instructor saved for a course. A plain database
+    read with no auth or Canvas checks, so callers do their own."""
+    course_doc = await achieveup_course_channels_collection.find_one(
+        {"course_id": str(course_id), "instructor_id": instructor_id})
+    return (course_doc or {}).get("youtube_channels", [])
+
+
+async def get_course_channels(token: str, course_id: str) -> list | dict:
+    """
+    Fetch configured YouTube channels for a given course ID.
+    Returns a list of {'channel_id', 'name'} dicts (empty if none are
+    saved), or an error dict if the user can't access the course.
+    """
+    try:
+        user, error = await require_course_instructor(token, course_id)
+        if error:
+            return error
+
+        return await get_saved_course_channels(course_id, user['id'])
+    except Exception as e:
+        logger.error(f"Error fetching channels for course {course_id}: {str(e)}")
+        return {'error': 'Internal server error', 'statusCode': 500}
+
+
+async def update_course_channels(token: str, course_id: str, channels: list):
+    """
+    Update or insert configured YouTube channels for a given course ID.
+    """
+    try:
+        user, error = await require_course_instructor(token, course_id)
+        if error:
+            return error
+
+        user_id = user['id']
+
+        if any(not isinstance(c, str) or not c.strip() for c in channels):
+            return {
+                'error': 'Invalid channels',
+                'message': 'Each channel must be a non-empty YouTube handle or channel ID.',
+                'statusCode': 400
+            }
+
+        # Resolve each channel to its YouTube ID and drop entries that point
+        # at a channel already listed (e.g. '@Foo', '@foo' or Foo's own ID).
+        # If the lookup itself fails (quota, bad key, outage), say so rather
+        # than "channel not found".
+        saved_channels = []
+        not_found = []
+
+        unique_channels: dict = {
+            channel.strip().lstrip('@').lower(): channel.strip()
+            for channel in channels}
+        if len(unique_channels) > Config.MAX_COURSE_CHANNELS:
+            return {
+                'error': 'Too many channels',
+                'message': f'Link up to {Config.MAX_COURSE_CHANNELS} channels',
+                'statusCode': 400
+            }
+
+        try:
+            for c in unique_channels.values():
+                channel = await resolve_channel(c)
+                if not channel:
+                    not_found.append(c)
+                elif channel not in saved_channels:
+                    saved_channels.append(channel)
+        except Exception:
+            return {
+                'error': 'YouTube unavailable',
+                'message': ("Couldn't reach YouTube to check these "
+                            "channels. Please try again later."),
+                'statusCode': 502
+            }
+        if not_found:
+            return {'error': 'Channel not found', 'message': f"Couldn't find these YouTube channels: {', '.join(not_found)}", 'statusCode': 400}
+
+
+
+        await achieveup_course_channels_collection.update_one(
+            {"course_id": str(course_id),
+             "instructor_id": user_id},
+            {"$set": {
+                "course_id": str(course_id),
+                "youtube_channels": saved_channels,
+                "instructor_id": user_id,
+                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None)
+            }},
+            upsert=True
+        )
+
+        logger.info(f"Successfully saved channels for course {course_id}: {saved_channels}")
+        return {'channels': saved_channels}
+
+    except Exception as e:
+        logger.error(f"MongoDB Error in update_course_channels for course {course_id}: {str(e)}", exc_info=True)
+        return {'error': 'Internal server error', 'statusCode': 500}

@@ -159,8 +159,7 @@ async def suggest_candidate_videos_route():
 
         result = await generate_ai_video_recommendations(
             token, course_id, skill_name,
-            matrix_id=data.get('matrix_id'),
-            count=data.get('count', 5),
+            matrix_id=data.get('matrix_id')
         )
         return _result_response(result)
 
@@ -171,7 +170,8 @@ async def suggest_candidate_videos_route():
 
 @skill_video_bp.route('/achieveup/skill-videos/<video_id>/find-moment', methods=['POST'])
 async def find_relevant_moment_route(video_id):
-    """Instructor opt-in: find the transcript moment most relevant to a manually-added video. (AchieveUp only)"""
+    """Instructor opt-in: find the transcript moment most relevant to a
+    video, manual or AI-suggested. (AchieveUp only)"""
     try:
         token = _extract_token()
         if not token:

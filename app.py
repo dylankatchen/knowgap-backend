@@ -107,6 +107,18 @@ async def create_indexes():
         # Don't raise the exception - allow the app to continue running
         # The indexes will be created when MongoDB is available
 
+    # Separate block so a failure here can't skip the indexes above.
+    try:
+        course_channels_collection = db[
+            Config.ACHIEVEUP_COURSE_CHANNELS_COLLECTION]
+        await course_channels_collection.create_index(
+            [("course_id", 1), ("instructor_id", 1)],
+            unique=True,
+            name="course_instructor_unique_idx"
+        )
+    except Exception as e:
+        logger.error(f"Failed to create course channels index: {str(e)}")
+
 async def scheduled_update():
     logger.info("Scheduled update started")
     try:

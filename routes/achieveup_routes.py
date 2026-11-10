@@ -9,7 +9,9 @@ from services.achieveup_service import (
     get_assigned_skills,
     delete_skill_matrix,  # Add new import
     get_course_description,
-    upsert_course_description
+    upsert_course_description,
+    get_course_channels,
+    update_course_channels
 )
 import logging
 
@@ -572,6 +574,104 @@ async def get_student_progress_route(student_id, course_id):
             'statusCode': 500
         }), 500
 
+@achieveup_bp.route('/achieveup/instructor/courses/<course_id>/channels', methods=['GET'])
+async def get_channels_endpoint(course_id):
+    """
+    Retrieve configured YouTube channels for a course.
+    """
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+        channels = await get_course_channels(token, course_id)
+        if isinstance(channels, dict) and 'error' in channels:
+            return jsonify({
+                'error': channels['error'],
+                'message': channels.get('message', channels['error']),
+                'statusCode': channels.get('statusCode', 500)
+            }), channels.get('statusCode', 500)
+
+        return jsonify({
+            "success": True,
+            "course_id": str(course_id),
+            "channels": channels
+        }), 200
+    except Exception as e:
+        logger.error(f"Get course channels route error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
+
+
+@achieveup_bp.route('/achieveup/instructor/courses/<course_id>/channels', methods=['PUT'])
+async def update_channels_endpoint(course_id):
+    """
+    Save or update preferred YouTube channels for a course.
+    Expected JSON Body: { "channels": ["@3Blue1Brown", "@freecodecamp"] }
+    """
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing token', 'message': 'Authorization header with Bearer token is required', 'statusCode': 401}), 401
+        token = auth_header.split(' ')[1]
+        data = await request.get_json(silent=True)
+
+        if data is None:
+            return jsonify({
+                'error': 'Invalid request',
+                'message': 'Request body must be valid JSON.',
+                'statusCode': 400
+            }), 400
+
+        if not isinstance(data, dict) or "channels" not in data:
+            return jsonify({
+                'error': 'Invalid request',
+                'message': "Missing 'channels' array in request body.",
+                'statusCode': 400
+            }), 400
+
+        channels_list = data.get("channels", [])
+        if not isinstance(channels_list, list):
+            return jsonify({
+                'error': 'Invalid request',
+                'message': ("'channels' must be a list of channel handles "
+                            "or IDs."),
+                'statusCode': 400
+            }), 400
+
+        result = await update_course_channels(token, course_id, channels_list)
+
+        if isinstance(result, dict) and 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'message': result.get('message', result['error']),
+                'statusCode': result.get('statusCode', 500)
+            }), result.get('statusCode', 500)
+
+        return jsonify({
+            "success": True,
+            "message": "Course channels updated successfully.",
+            "course_id": str(course_id),
+            "channels": result['channels']
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Update course channels route error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'statusCode': 500
+        }), 500
 
 @achieveup_bp.route('/achieveup/instructor/course/<course_id>/force-sync', methods=['POST'])
 async def instructor_force_sync_route(course_id):
