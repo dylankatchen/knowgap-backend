@@ -715,14 +715,25 @@ async def instructor_force_sync_route(course_id):
                 'statusCode': 400
             }), 400
 
-        # Run the sync in the background to avoid Heroku/Netlify timeouts
-        # The frontend will be notified that sync has started
-        from services.canvas_submissions_service import sync_course_submissions_direct
-        asyncio.create_task(sync_course_submissions_direct(canvas_token, course_id))
+        # Only one sync per course at a time; two would both add scores on
+        # top of each other.
+        from services.sync_status_service import try_start_sync, start_background_sync
+        sync_status = await try_start_sync(course_id, 'manual')
+        if sync_status is None:
+            return jsonify({
+                'error': 'Sync already running',
+                'message': 'A sync for this course is already running.',
+                'statusCode': 409
+            }), 409
+
+        # Run the sync in the background to avoid Heroku/Netlify timeouts.
+        # The frontend polls the sync-status route to learn when it finishes.
+        start_background_sync(canvas_token, course_id)
 
         return jsonify({
             'message': f'Sync started in background for course {course_id}. This may take a minute.',
             'status': 'processing',
+            'sync_status': sync_status,
             'details': {
                 'total_quizzes': 0,
                 'total_synced': 0,
@@ -737,6 +748,38 @@ async def instructor_force_sync_route(course_id):
         return jsonify({
             'error': 'Internal server error',
             'message': 'An unexpected error occurred during sync',
+            'statusCode': 500
+        }), 500
+
+@achieveup_bp.route('/achieveup/instructor/course/<course_id>/sync-status', methods=['GET'])
+async def instructor_sync_status_route(course_id):
+    """Status of the course's latest sync (instructor only). Polled by the
+    frontend while a sync runs: status is 'idle', 'running', 'done' or
+    'failed', with quizzes_done / quizzes_total while running."""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Missing token',
+                'message': 'Authorization header with Bearer token is required',
+                'statusCode': 401
+            }), 401
+
+        token = auth_header.split(' ')[1]
+
+        from services.achieveup_service import require_course_instructor
+        _, error = await require_course_instructor(token, course_id, include_concluded=True)
+        if error:
+            return jsonify(error), error['statusCode']
+
+        from services.sync_status_service import get_sync_status
+        return jsonify(await get_sync_status(course_id)), 200
+
+    except Exception as e:
+        logger.error(f"Sync status error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500
 

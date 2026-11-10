@@ -5,7 +5,7 @@ from quart_cors import cors
 from dotenv import load_dotenv
 from utils.encryption_utils import decrypt_token
 
-from services.canvas_submissions_service import sync_course_submissions_direct
+from services.sync_status_service import finish_sync, run_tracked_sync, try_start_sync
 from services.course_service import update_quiz_questions_per_course
 
 from routes.base_routes import init_base_routes
@@ -139,14 +139,24 @@ async def scheduled_update():
                         logger.info("Processing AchieveUp course ID: %s for user_id %s", course_id, user.get('user_id'))
                         
                         try:
-                            # Sync data
-                            await update_quiz_questions_per_course(course_id, access_token, link)
-                            
-                            # Update mastery
-                            await sync_course_submissions_direct(access_token, course_id, official_course_name(course))
-                            
+                            # Skip a course whose sync is already running
+                            # (e.g. an instructor pressed Sync Now).
+                            if await try_start_sync(course_id, 'scheduled') is None:
+                                logger.info("Skipping course ID %s: a sync is already running", course_id)
+                                continue
+
+                            # Refresh quiz questions, then update mastery. The
+                            # refresh runs inside the tracked sync so its
+                            # heartbeat covers it too.
+                            async def refresh_questions(course_id=course_id, access_token=access_token):
+                                await update_quiz_questions_per_course(course_id, access_token, link)
+
+                            await run_tracked_sync(access_token, course_id, official_course_name(course),
+                                                   prepare=refresh_questions)
+
                         except Exception as course_error:
                             logger.error("Error processing course ID %s: %s", course_id, course_error)
+                            await finish_sync(course_id, 'The sync failed unexpectedly. Please try again.')
                         
                         # Rate limit safeguard: pause between courses
                         await asyncio.sleep(1)

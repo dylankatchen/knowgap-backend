@@ -146,6 +146,28 @@ async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'stu
             'message': 'An unexpected error occurred while validating the token.'
         }
 
+TEACHING_ENROLLMENT_TYPES = ['TeacherEnrollment', 'TaEnrollment', 'DesignerEnrollment']
+
+
+CANVAS_ACCESS_CHECK_UNAVAILABLE = (
+    "Couldn't reach Canvas to check your access to this course. Please try again in a few minutes."
+)
+
+
+async def _own_teaching_enrollments(session, headers: dict, course_id: str, state: str):
+    """The user's own teaching enrollments in one course, read from their
+    enrollment list rather than the course's. Canvas can refuse a former
+    teacher the roster of a concluded course, but always lets a user read
+    their own enrollments. Returns (enrollments, error)."""
+    enrollments, error = await _fetch_all_canvas_pages(
+        session, f"{CANVAS_API_URL}/users/self/enrollments", headers,
+        params={'type[]': TEACHING_ENROLLMENT_TYPES, 'state[]': state, 'per_page': 100},
+        resource='enrollments')
+    if error:
+        return None, error
+    return [e for e in enrollments if str(e.get('course_id')) == str(course_id)], None
+
+
 async def validate_canvas_instructor_for_course(canvas_token: str, course_id: str, include_concluded: bool = False) -> dict:
     """Validate Instructor of a specific course. Canvas marks a teacher's
     enrollment 'completed' once the term ends, so include_concluded also
@@ -172,49 +194,64 @@ async def validate_canvas_instructor_for_course(canvas_token: str, course_id: st
                     return {
                         'valid': False,
                         'statusCode': 502,
-                        'message': f'Canvas API returned error {response.status}. Please try again later.'
+                        'message': CANVAS_ACCESS_CHECK_UNAVAILABLE
                     }
                 user_data = await response.json()
 
         # Check if user is instructor for the specified course
         user_id = user_data.get('id')
         enrollments_url = f"{CANVAS_API_URL}/courses/{course_id}/enrollments"
+        state = 'current_and_concluded' if include_concluded else 'active'
         params = {
             'user_id': user_id,
-            'type[]': ['TeacherEnrollment', 'TaEnrollment', 'DesignerEnrollment'],
-            'state[]': 'current_and_concluded' if include_concluded else 'active',
+            'type[]': TEACHING_ENROLLMENT_TYPES,
+            'state[]': state,
             'per_page': 10
         }
         async with create_canvas_session() as session:
             async with session.get(enrollments_url, headers=headers, params=params) as enrollments_response:
-                if enrollments_response.status == 401:
-                    return {
-                        'valid': False,
-                        'statusCode': 403,
-                        'message': 'Failed to retrieve enrollment information.'
-                    }
-                if enrollments_response.status == 404:
+                status = enrollments_response.status
+                if status == 404:
                     return {
                         'valid': False,
                         'statusCode': 403,
                         'message': f'Course {course_id} was not found in Canvas.'
                     }
-                if enrollments_response.status != 200:
+                if status not in (200, 401, 403):
                     error_text = await enrollments_response.text()
-                    logger.error(f"Canvas enrollments validation error: {enrollments_response.status} - {error_text}")
+                    logger.error(f"Canvas enrollments validation error: {status} - {error_text}")
                     return {
                         'valid': False,
                         'statusCode': 502,
-                        'message': f'Canvas API returned error {enrollments_response.status}. Please try again later.'
+                        'message': CANVAS_ACCESS_CHECK_UNAVAILABLE
                     }
-                enrollments_data = await enrollments_response.json()
+                enrollments_data = await enrollments_response.json() if status == 200 else None
+
+            if enrollments_data is None:
+                # Canvas wouldn't show this course's roster (it does this to
+                # former teachers once a course concludes), so look for the
+                # enrollment in the user's own list instead.
+                logger.info(f"Canvas refused course {course_id} enrollments ({status}); checking the user's own")
+                enrollments_data, error = await _own_teaching_enrollments(session, headers, course_id, state)
+                if error:
+                    logger.error(f"Canvas own-enrollments check failed for course {course_id}: {error}")
+                    return {
+                        'valid': False,
+                        'statusCode': 502 if error.get('statusCode', 500) >= 500 else 403,
+                        'message': CANVAS_ACCESS_CHECK_UNAVAILABLE if error.get('statusCode', 500) >= 500
+                        else f"Canvas wouldn't confirm that you teach course {course_id}."
+                    }
 
             #check if instructor level enrollment is active
             if not enrollments_data or len(enrollments_data) == 0:
                 return {
                     'valid': False,
                     'statusCode': 403,
-                    'message': f'Token is valid but user does not have instructor access to course {course_id}.'
+                    # Without include_concluded this is also what a course
+                    # whose term has ended gets, so say that's a possibility.
+                    'message': (f"You don't teach course {course_id} in Canvas." if include_concluded else
+                                f"You aren't a current instructor of course {course_id} in Canvas. "
+                                "Courses from past terms can be viewed but not changed.")
                 }
             enrollment_type = enrollments_data[0].get('type', '')
             logger.info(f"User {user_id} has '{enrollment_type}' enrollemt in course {course_id}")

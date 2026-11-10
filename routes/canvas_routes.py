@@ -8,6 +8,20 @@ import logging
 logger = logging.getLogger(__name__)
 canvas_bp = Blueprint('canvas', __name__)
 
+
+def _instructor_canvas_error(result):
+    """Turn a Canvas service error dict into a (body, status) response.
+    Canvas 5xx becomes 502 and a rejected Canvas token becomes 400 (a 401
+    would log the user out of AchieveUp), matching check_course_instructor.
+    Our own failures (500) and other 4xx keep their status."""
+    status = result.get('statusCode', 502)
+    if status == 401:
+        status = 400
+    elif status >= 500 and result.get('error') != 'Internal server error':
+        status = 502
+    message = result.get('message') or result['error']
+    return jsonify({'error': result['error'], 'message': message, 'statusCode': status}), status
+
 @canvas_bp.route('/canvas/courses', methods=['GET'])
 async def achieveup_canvas_courses_route():
     """Get user's Canvas courses. (AchieveUp only)"""
@@ -188,6 +202,8 @@ async def instructor_courses_route():
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_courses
         result = await get_instructor_courses(canvas_token)
+        if isinstance(result, dict) and 'error' in result:
+            return _instructor_canvas_error(result)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
@@ -209,6 +225,8 @@ async def instructor_course_quizzes_route(course_id):
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_course_quizzes
         result = await get_instructor_course_quizzes(canvas_token, course_id)
+        if isinstance(result, dict) and 'error' in result:
+            return _instructor_canvas_error(result)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500
@@ -230,6 +248,8 @@ async def instructor_quiz_questions_route(course_id, quiz_id):
             return jsonify({'error': 'No Canvas token', 'message': 'No Canvas API token found for user', 'statusCode': 400}), 400
         from services.achieveup_canvas_service import get_instructor_quiz_questions
         result = await get_instructor_quiz_questions(canvas_token, quiz_id, course_id)
+        if isinstance(result, dict) and 'error' in result:
+            return _instructor_canvas_error(result)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}), 500 

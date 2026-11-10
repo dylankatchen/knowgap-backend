@@ -236,14 +236,17 @@ class BadgeViewAccessTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ForceSyncRouteTest(unittest.IsolatedAsyncioTestCase):
-    async def force_sync(self, check_result):
+    async def force_sync(self, check_result, claimed=True):
         from app import app
         self.sync = AsyncMock()
+        claim = {'course_id': '100', 'status': 'running'} if claimed else None
         with patch('services.achieveup_service.require_course_instructor',
                    AsyncMock(return_value=check_result)) as self.check, \
              patch('services.achieveup_auth_service.get_user_canvas_token',
                    AsyncMock(return_value='canvas-token')), \
-             patch('services.canvas_submissions_service.sync_course_submissions_direct', self.sync):
+             patch('services.sync_status_service.try_start_sync',
+                   AsyncMock(return_value=claim)) as self.claim, \
+             patch('services.sync_status_service.run_tracked_sync', self.sync):
             response = await app.test_client().post(
                 '/achieveup/instructor/course/100/force-sync', headers={'Authorization': 'Bearer t'})
             await asyncio.sleep(0)  # let a started background task run
@@ -253,12 +256,44 @@ class ForceSyncRouteTest(unittest.IsolatedAsyncioTestCase):
         response = await self.force_sync((INSTRUCTOR, None))
         self.assertEqual(response.status_code, 202)
         self.check.assert_awaited_once_with('t', '100', include_concluded=True)
-        self.sync.assert_awaited_once_with('canvas-token', '100')
+        self.claim.assert_awaited_once_with('100', 'manual')
+        self.sync.assert_awaited_once_with('canvas-token', '100', None)
+        self.assertEqual((await response.get_json())['sync_status']['status'], 'running')
 
     async def test_sync_refused_when_course_check_fails(self):
         response = await self.force_sync((None, {'error': 'Access denied', 'statusCode': 403}))
         self.assertEqual(response.status_code, 403)
+        self.claim.assert_not_called()
         self.sync.assert_not_called()
+
+    async def test_second_sync_refused_while_one_runs(self):
+        response = await self.force_sync((INSTRUCTOR, None), claimed=False)
+        self.assertEqual(response.status_code, 409)
+        self.sync.assert_not_called()
+
+
+class SyncStatusRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def sync_status(self, check_result):
+        from app import app
+        status = {'course_id': '100', 'status': 'running', 'quizzes_done': 3, 'quizzes_total': 8}
+        with patch('services.achieveup_service.require_course_instructor',
+                   AsyncMock(return_value=check_result)) as self.check, \
+             patch('services.sync_status_service.get_sync_status',
+                   AsyncMock(return_value=status)) as self.get_status:
+            return await app.test_client().get(
+                '/achieveup/instructor/course/100/sync-status', headers={'Authorization': 'Bearer t'})
+
+    async def test_instructor_gets_status(self):
+        response = await self.sync_status((INSTRUCTOR, None))
+        self.assertEqual(response.status_code, 200)
+        self.check.assert_awaited_once_with('t', '100', include_concluded=True)
+        body = await response.get_json()
+        self.assertEqual((body['status'], body['quizzes_done']), ('running', 3))
+
+    async def test_refused_when_course_check_fails(self):
+        response = await self.sync_status((None, {'error': 'Access denied', 'statusCode': 403}))
+        self.assertEqual(response.status_code, 403)
+        self.get_status.assert_not_called()
 
 
 if __name__ == '__main__':

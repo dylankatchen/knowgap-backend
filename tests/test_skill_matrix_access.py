@@ -394,6 +394,7 @@ class FakeResponse:
     def __init__(self, status, json_payload):
         self.status = status
         self._json_payload = json_payload
+        self.headers = {}
 
     async def __aenter__(self):
         return self
@@ -404,10 +405,20 @@ class FakeResponse:
     async def json(self):
         return self._json_payload
 
+    async def text(self):
+        return str(self._json_payload)
+
 
 class FakeSession:
-    def __init__(self, calls):
+    """Canvas for one teacher. roster_status is what the course's enrollment
+    list returns; own_enrollments is the user's own enrollment list."""
+
+    def __init__(self, calls, roster_status=200, own_enrollments=None, own_status=200):
         self.calls = calls
+        self.roster_status = roster_status
+        self.own_enrollments = own_enrollments or []
+        self.own_status = own_status
+        self.urls = []
 
     async def __aenter__(self):
         return self
@@ -417,8 +428,13 @@ class FakeSession:
 
     def get(self, url, headers=None, params=None):
         self.calls.append(params)
+        self.urls.append(url)
         if url.endswith('/users/self'):
             return FakeResponse(200, {'id': 7})
+        if url.endswith('/users/self/enrollments'):
+            return FakeResponse(self.own_status, self.own_enrollments)
+        if self.roster_status != 200:
+            return FakeResponse(self.roster_status, {'errors': [{'message': 'user not authorized to perform that action'}]})
         return FakeResponse(200, [{'type': 'TeacherEnrollment'}])
 
 
@@ -436,6 +452,65 @@ class CourseInstructorStateFilterTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_include_concluded_also_accepts_past_terms(self):
         await self.check_state_sent('current_and_concluded', include_concluded=True)
+
+
+class CourseInstructorCanvasRefusalTest(unittest.IsolatedAsyncioTestCase):
+    """Canvas can refuse a former teacher a concluded course's roster. The
+    check then uses the user's own enrollments, and never shows Canvas's raw
+    status to the instructor."""
+
+    async def check(self, include_concluded=True, **session_kwargs):
+        calls = []
+        sessions = []
+
+        def new_session():
+            sessions.append(FakeSession(calls, **session_kwargs))
+            return sessions[-1]
+
+        with patch('services.achieveup_canvas_service.create_canvas_session', side_effect=new_session):
+            result = await canvas_service.validate_canvas_instructor_for_course(
+                'tok', '100', include_concluded=include_concluded)
+        self.urls = [url for s in sessions for url in s.urls]
+        self.calls = calls
+        return result
+
+    async def test_refused_roster_falls_back_to_own_enrollment_in_past_course(self):
+        for refused in (401, 403):
+            with self.subTest(status=refused):
+                result = await self.check(roster_status=refused, own_enrollments=[
+                    {'course_id': 99, 'type': 'TeacherEnrollment'},
+                    {'course_id': 100, 'type': 'TeacherEnrollment', 'enrollment_state': 'completed'},
+                ])
+                self.assertTrue(result['valid'])
+                self.assertTrue(self.urls[-1].endswith('/users/self/enrollments'))
+                self.assertEqual(self.calls[-1]['state[]'], 'current_and_concluded')
+
+    async def test_refused_roster_with_no_own_enrollment_is_denied_plainly(self):
+        result = await self.check(roster_status=401, own_enrollments=[{'course_id': 99, 'type': 'TeacherEnrollment'}])
+        self.assertFalse(result['valid'])
+        self.assertEqual(result['statusCode'], 403)
+        self.assertEqual(result['message'], "You don't teach course 100 in Canvas.")
+
+    async def test_writes_to_a_past_course_explain_why(self):
+        result = await self.check(include_concluded=False, roster_status=401, own_enrollments=[])
+        self.assertEqual(result['statusCode'], 403)
+        self.assertIn('past terms can be viewed but not changed', result['message'])
+        self.assertEqual(self.calls[-1]['state[]'], 'active')
+
+    async def test_canvas_errors_never_show_raw_status(self):
+        for kwargs in ({'roster_status': 500}, {'roster_status': 422},
+                       {'roster_status': 401, 'own_status': 503}):
+            with self.subTest(**kwargs):
+                result = await self.check(**kwargs)
+                self.assertFalse(result['valid'])
+                self.assertEqual(result['statusCode'], 502)
+                self.assertEqual(result['message'], canvas_service.CANVAS_ACCESS_CHECK_UNAVAILABLE)
+                self.assertNotRegex(result['message'], r'\d{3}')
+
+    async def test_own_enrollments_refused_too_is_denied_without_raw_status(self):
+        result = await self.check(roster_status=401, own_status=401)
+        self.assertEqual(result['statusCode'], 403)
+        self.assertEqual(result['message'], "Canvas wouldn't confirm that you teach course 100.")
 
 
 if __name__ == '__main__':
