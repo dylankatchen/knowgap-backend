@@ -1135,9 +1135,10 @@ async def import_matrices_route():
         }), 200
 
     except Exception as e:
+        logger.error(f"Import matrices route error: {str(e)}")
         return jsonify({
             'error': 'Internal server error',
-            'message': str(e),
+            'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500
     
@@ -1207,9 +1208,10 @@ async def import_skills_assignment_route():
         return jsonify(result), 200
 
     except Exception as e:
+        logger.error(f"Import skills route error: {str(e)}")
         return jsonify({
             'error': 'Internal server error',
-            'message': str(e),
+            'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500
     
@@ -1235,8 +1237,9 @@ async def get_import_status_route(course_id):
         return jsonify(result), 200
 
     except Exception as e:
+        logger.error(f"Import status route error: {str(e)}")
         return jsonify({
             'error': 'Internal server error',
-            'message': str(e),
+            'message': 'An unexpected error occurred',
             'statusCode': 500
         }), 500

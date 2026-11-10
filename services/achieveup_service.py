@@ -598,7 +598,7 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
         logger.error(f"AI skill suggestion error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {'error': 'Internal server error', 'message': str(e), 'statusCode': 500}
+        return {'error': 'Internal server error', 'message': 'An unexpected error occurred', 'statusCode': 500}
 
 
 async def analyze_questions_with_ai(token: str, questions: list, course_id: str, matrix_id: str = None) -> dict:
@@ -936,10 +936,10 @@ async def import_skill_setting_from_course(source_course_id: str, target_course_
         traceback.print_exc()
         return {
             'error': 'Internal server error',
-            'message': str(e),
+            'message': 'An unexpected error occurred',
             'statusCode': 500
         }
-    
+
 async def get_import_status(token: str, course_id: str) -> dict:
     try:
         user_result = await achieveup_verify_token(token)

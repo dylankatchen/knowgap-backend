@@ -11,6 +11,7 @@ from services.skill_video_service import (
     find_relevant_moment,
     verify_ai_video,
 )
+from utils.request_utils import not_text_response
 
 skill_video_bp = Blueprint('skill_video', __name__)
 logger = logging.getLogger(__name__)
@@ -36,14 +37,6 @@ def _all_text(*values):
     database queries, where a JSON object such as {"$ne": null} would act as
     a filter instead of a value."""
     return all(value is None or isinstance(value, str) for value in values)
-
-
-def _not_text_response():
-    return jsonify({
-        'error': 'Invalid request',
-        'message': 'Request fields must be text',
-        'statusCode': 400
-    }), 400
 
 
 def _result_response(result, success_status=200):
@@ -75,7 +68,7 @@ async def get_skill_videos_route():
         if not course_id or not skill_name:
             return jsonify({'error': 'Missing required fields', 'message': 'course_id and skill_name are required', 'statusCode': 400}), 400
         if not _all_text(course_id, skill_name, matrix_id):
-            return _not_text_response()
+            return not_text_response()
 
         result = await get_skill_videos(token, course_id, skill_name, matrix_id)
         return _result_response(result)
@@ -103,17 +96,13 @@ async def add_skill_video_route():
 
         if not course_id or not skill_name or not link:
             return jsonify({'error': 'Missing required fields', 'message': 'course_id, skill_name and link are required', 'statusCode': 400}), 400
-        optional_fields = [data.get(field) for field in ('matrix_id', 'title', 'channel', 'thumbnail', 'source')]
-        if not _all_text(course_id, skill_name, link, *optional_fields):
-            return _not_text_response()
+        if not _all_text(course_id, skill_name, link, data.get('matrix_id'), data.get('title')):
+            return not_text_response()
 
         result = await add_skill_video(
             token, course_id, skill_name, link,
             matrix_id=data.get('matrix_id'),
             title=data.get('title'),
-            channel=data.get('channel'),
-            thumbnail=data.get('thumbnail'),
-            source=data.get('source', 'manual'),
         )
         return _result_response(result, success_status=201)
 
@@ -156,7 +145,7 @@ async def suggest_candidate_videos_route():
         if not course_id or not skill_name:
             return jsonify({'error': 'Missing required fields', 'message': 'course_id and skill_name are required', 'statusCode': 400}), 400
         if not _all_text(course_id, skill_name, data.get('matrix_id')):
-            return _not_text_response()
+            return not_text_response()
 
         result = await generate_ai_video_recommendations(
             token, course_id, skill_name,
@@ -220,7 +209,7 @@ async def vote_skill_video_route():
         if not video_id or not vote_type:
             return jsonify({'error': 'Missing required fields', 'message': 'video_id and vote_type are required', 'statusCode': 400}), 400
         if not _all_text(video_id, vote_type):
-            return _not_text_response()
+            return not_text_response()
 
         result = await vote_skill_video(token, video_id, vote_type)
         return _result_response(result)

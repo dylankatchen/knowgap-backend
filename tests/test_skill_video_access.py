@@ -1,7 +1,11 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
+
 from services import skill_video_service
+from utils import youtube_utils
 from utils.youtube_utils import normalize_youtube_link
 
 VIDEO_ID = 'dQw4w9WgXcQ'
@@ -87,6 +91,95 @@ class YouTubeLinkTest(unittest.TestCase):
         self.assertEqual(normalize_youtube_link(f'https://evil.com\\@youtube.com/watch?v={VIDEO_ID}'), CLEAN_LINK)
 
 
+class FakeYouTubeSession:
+    """Stands in for aiohttp.ClientSession. `outcome` is the (status, json body)
+    YouTube sends back, or an exception raised while asking."""
+
+    def __init__(self, outcome, **kwargs):
+        self.outcome = outcome
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def get(self, url):
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        status, body = self.outcome
+        response = MagicMock(status=status)
+        response.json = AsyncMock(return_value=body)
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=False)
+        return response
+
+
+def snippet(**overrides):
+    return {'items': [{'snippet': {
+        'title': 'Loops &amp; more', 'channelTitle': 'CS Channel',
+        'thumbnails': {'high': {'url': 'https://i.ytimg.com/high.jpg'},
+                       'medium': {'url': 'https://i.ytimg.com/medium.jpg'}},
+        **overrides}}]}
+
+
+API_KEY = 'secret-api-key'
+
+
+class VideoMetadataTest(unittest.IsolatedAsyncioTestCase):
+    async def lookup(self, outcome):
+        sessions = []
+
+        def make_session(**kwargs):
+            sessions.append(FakeYouTubeSession(outcome, **kwargs))
+            return sessions[-1]
+        with patch('aiohttp.ClientSession', make_session):
+            result = await youtube_utils.get_video_metadata(CLEAN_LINK)
+        return result, sessions[0]
+
+    async def test_video_details_are_returned(self):
+        result, session = await self.lookup((200, snippet()))
+        self.assertEqual(result, {'title': 'Loops & more', 'link': CLEAN_LINK, 'channel': 'CS Channel',
+                                  'thumbnail': 'https://i.ytimg.com/high.jpg'})
+        self.assertEqual(session.kwargs['timeout'].total, 10)
+
+    async def test_missing_thumbnail_sizes_fall_back(self):
+        result, _ = await self.lookup((200, snippet(thumbnails={'medium': {'url': 'https://i.ytimg.com/medium.jpg'}})))
+        self.assertEqual(result['thumbnail'], 'https://i.ytimg.com/medium.jpg')
+        result, _ = await self.lookup((200, snippet(thumbnails=None)))
+        self.assertEqual(result['thumbnail'], '')
+
+    async def test_unknown_video_is_not_found(self):
+        for body in ({'items': []}, {}):
+            with self.subTest(body=body):
+                result, _ = await self.lookup((200, body))
+                self.assertEqual(result, {'error': youtube_utils.VIDEO_NOT_FOUND})
+
+    async def test_youtube_error_reply_gives_its_reason(self):
+        quota = {'error': {'code': 403, 'errors': [{'reason': 'quotaExceeded'}]}}
+        result, _ = await self.lookup((403, quota))
+        self.assertEqual(result, {'error': 'Failed to fetch metadata, status code: 403, reason: quotaExceeded'})
+        result, _ = await self.lookup((500, 'not an object'))
+        self.assertEqual(result, {'error': 'Failed to fetch metadata, status code: 500, reason: unknown'})
+
+    async def test_failed_lookups_are_logged_instead_of_raising(self):
+        for outcome in [
+            # aiohttp puts the request URL, API key included, in some errors.
+            aiohttp.ClientError(f"url='https://www.googleapis.com/youtube/v3/videos?key={API_KEY}'"),
+            aiohttp.ClientConnectionError('no route to host'),
+            asyncio.TimeoutError(),
+            (200, ['not', 'an', 'object']),
+            (200, {'items': [{}]}),
+            (200, snippet(title=None)),
+        ]:
+            with self.subTest(outcome=outcome):
+                with self.assertLogs(level='ERROR') as logs:
+                    result, _ = await self.lookup(outcome)
+                self.assertEqual(result, {'error': 'Failed to fetch metadata'})
+                self.assertNotIn(API_KEY, str(logs.output))
+
+
 class SkillVideoAccessTest(unittest.IsolatedAsyncioTestCase):
     """The instructor currently teaches course '100' and not '999'."""
 
@@ -165,7 +258,33 @@ class SkillVideoAccessTest(unittest.IsolatedAsyncioTestCase):
         saved = self.videos.insert_one.await_args.args[0]
         self.assertEqual(saved['link'], CLEAN_LINK)
         self.assertEqual(saved['course_id'], '100')
+        self.assertEqual(saved['source'], 'manual')
+        self.assertEqual(saved['channel'], 'CS Channel')
+        self.assertEqual(saved['thumbnail'], 'https://i.ytimg.com/x.jpg')
         self.assertNotIn('added_by', result)
+
+    async def test_add_keeps_the_instructors_title(self):
+        await skill_video_service.add_skill_video('t', '100', 'Loops', CLEAN_LINK, title='My title')
+        saved = self.videos.insert_one.await_args.args[0]
+        self.assertEqual(saved['title'], 'My title')
+        self.assertEqual(saved['channel'], 'CS Channel')
+
+    async def test_add_rejects_video_youtube_cannot_find(self):
+        with patch('services.skill_video_service.get_video_metadata',
+                   AsyncMock(return_value={'error': 'Video not found'})):
+            result = await self.add('100')
+        self.assertEqual(result['statusCode'], 400)
+        self.videos.insert_one.assert_not_awaited()
+
+    async def test_add_saves_nothing_when_youtube_lookup_fails(self):
+        with patch('services.skill_video_service.get_video_metadata',
+                   AsyncMock(return_value={'error': 'Failed to fetch metadata, status code: 403'})), \
+             self.assertLogs('services.skill_video_service', 'ERROR') as logs:
+            result = await self.add('100')
+        self.assertEqual(result['statusCode'], 502)
+        self.assertNotIn('403', result['message'])
+        self.assertIn('status code: 403', logs.output[0])
+        self.videos.insert_one.assert_not_awaited()
 
     async def test_add_denied_for_course_not_taught(self):
         result = await self.add('999')
@@ -212,8 +331,9 @@ class SkillVideoAccessTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['matrix_id'], 'm-1')
         self.assertEqual(self.video_queries[-1]['matrix_id'], 'm-1')
 
-    async def test_suggest_never_uses_another_courses_matrix(self):
-        topics = AsyncMock(return_value={'success': False, 'error': 'stop here'})
+    async def suggest(self, matrix_id=None, topics_error='stop here'):
+        """Run AI suggestions up to the topic step, which fails with topics_error."""
+        topics = AsyncMock(return_value={'success': False, 'error': topics_error})
         descriptions = MagicMock()
         descriptions.find_one = AsyncMock(return_value={'description': 'Course description'})
         mappings = MagicMock()
@@ -225,9 +345,22 @@ class SkillVideoAccessTest(unittest.IsolatedAsyncioTestCase):
         with patch('services.skill_video_service.generate_skill_search_topics', topics), \
              patch('services.skill_video_service.achieveup_course_descriptions_collection', descriptions), \
              patch('services.skill_video_service.achieveup_question_skills_collection', mappings):
-            await skill_video_service.generate_ai_video_recommendations('t', '100', 'Loops', matrix_id='m-999')
+            result = await skill_video_service.generate_ai_video_recommendations(
+                't', '100', 'Loops', matrix_id=matrix_id)
+        return result, topics
+
+    async def test_suggest_never_uses_another_courses_matrix(self):
+        with self.assertLogs('services.skill_video_service', 'ERROR'):
+            _, topics = await self.suggest(matrix_id='m-999')
         course_name = topics.await_args.args[1]
         self.assertEqual(course_name, 'Intro Programming')
+
+    async def test_suggest_logs_ai_error_instead_of_returning_it(self):
+        with self.assertLogs('services.skill_video_service', 'ERROR') as logs:
+            result, _ = await self.suggest(topics_error='secret AI detail')
+        self.assertEqual(result['statusCode'], 502)
+        self.assertNotIn('secret AI detail', str(result))
+        self.assertIn('secret AI detail', logs.output[0])
 
     async def test_own_and_unknown_matrix_ids_are_kept(self):
         # 'primary' and deleted matrices have no matrix document, but videos
@@ -324,7 +457,7 @@ class SkillVideoRouteInputTest(unittest.IsolatedAsyncioTestCase):
             ('/achieveup/skill-videos/get', {'course_id': '100', 'skill_name': 'Loops'},
              ['course_id', 'skill_name', 'matrix_id'], 'get_skill_videos'),
             ('/achieveup/skill-videos', add_body,
-             ['course_id', 'skill_name', 'link', 'matrix_id', 'title', 'channel', 'thumbnail', 'source'],
+             ['course_id', 'skill_name', 'link', 'matrix_id', 'title'],
              'add_skill_video'),
             ('/achieveup/skill-videos/suggest', {'course_id': '100', 'skill_name': 'Loops'},
              ['course_id', 'skill_name', 'matrix_id'], 'generate_ai_video_recommendations'),
@@ -337,6 +470,13 @@ class SkillVideoRouteInputTest(unittest.IsolatedAsyncioTestCase):
                         response, service = await self.post(path, {**base, field: bad_value}, service_name)
                         self.assertEqual(response.status_code, 400)
                         service.assert_not_called()
+
+    async def test_add_ignores_caller_channel_thumbnail_and_source(self):
+        body = {'course_id': '100', 'skill_name': 'Loops', 'link': CLEAN_LINK, 'title': 'x',
+                'channel': 'Evil', 'thumbnail': 'javascript:alert(1)', 'source': 'ai_suggested'}
+        response, service = await self.post('/achieveup/skill-videos', body, 'add_skill_video')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(service.await_args.kwargs, {'matrix_id': None, 'title': 'x'})
 
     async def test_edit_route_is_gone(self):
         from app import app
