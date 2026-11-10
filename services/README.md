@@ -70,7 +70,7 @@ The `services` directory is responsible for handling the core business logic and
 ### 11. `skill_video_service.py`
 - **Purpose**: Manages the curated list of videos for each AchieveUp skill.
 - **Key Functions**:
-  - **`get_skill_videos(...)`**, **`add_skill_video(...)`**, **`update_skill_video(...)`**, **`remove_skill_video(...)`**: Manage a skill's video list.
+  - **`get_skill_videos(...)`**, **`add_skill_video(...)`**, **`remove_skill_video(...)`**: Manage a skill's video list.
   - **`generate_ai_video_recommendations(...)`** / **`verify_ai_video(...)`**: Add AI-suggested videos and mark them as reviewed.
   - **`find_relevant_moment(token, video_id)`**: Uses the video transcript to find the moment most relevant to the skill.
   - **`vote_skill_video(...)`**: Records whether a student found a video helpful.

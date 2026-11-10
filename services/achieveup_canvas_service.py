@@ -178,8 +178,10 @@ async def validate_canvas_token(canvas_token: str, canvas_token_type: str = 'stu
             'message': 'An unexpected error occurred while validating the token.'
         }
 
-async def validate_canvas_instructor_for_course(canvas_token: str, course_id: str) -> dict:
-    """Validate Instructor of a specific course"""
+async def validate_canvas_instructor_for_course(canvas_token: str, course_id: str, include_concluded: bool = False) -> dict:
+    """Validate Instructor of a specific course. Canvas marks a teacher's
+    enrollment 'completed' once the term ends, so include_concluded also
+    accepts courses they taught in a past term (for read-only checks)."""
     try:
         headers = {
             'Authorization': f'Bearer {canvas_token}',
@@ -212,7 +214,7 @@ async def validate_canvas_instructor_for_course(canvas_token: str, course_id: st
         params = {
             'user_id': user_id,
             'type[]': ['TeacherEnrollment', 'TaEnrollment', 'DesignerEnrollment'],
-            'state[]': 'active',
+            'state[]': 'current_and_concluded' if include_concluded else 'active',
             'per_page': 10
         }
         async with create_canvas_session() as session:

@@ -136,42 +136,31 @@ async def _instructor_teaches_student(canvas_token: str, student_id: str, hint_c
     return False
 
 async def get_student_earned_badges(token: str, student_id: str, course_id: str = None) -> dict:
-    """Get all earned badges for a specific student with course information."""
+    """Get a student's earned badges with course information: all of them
+    for the student themself, or one course's for an instructor of it."""
     try:
         # Verify token
         user_result = await achieveup_verify_token(token)
         if 'error' in user_result:
             return user_result
 
-        # Self-view always allowed. Otherwise, an instructor may view a
-        # student they actually teach (verified against real Canvas
-        # enrollment, not just their role) — never any other combination.
+        # Self-view always allowed. Otherwise, an instructor sees a student's
+        # badges for one course they teach (or taught), verified against
+        # Canvas, and only that course's badges are returned. An account
+        # with no Canvas id saved is never treated as the student asked about.
         caller = user_result['user']
         from services.achieveup_auth_service import get_user_canvas_token
         canvas_token = await get_user_canvas_token(caller['id'])
 
-        is_self = str(caller.get('canvas_student_id')) == str(student_id)
+        own_id = caller.get('canvas_student_id')
+        is_self = own_id is not None and str(own_id) == str(student_id)
         if not is_self:
-            if caller.get('role') != 'instructor' or not canvas_token:
-                return {
-                    'error': 'Forbidden',
-                    'message': "You do not have access to this student's badges",
-                    'statusCode': 403
-                }
-            try:
-                teaches_student = await _instructor_teaches_student(canvas_token, student_id, course_id)
-            except CanvasVerificationUnavailable:
-                return {
-                    'error': 'Canvas Unavailable',
-                    'message': 'Could not verify your Canvas enrollment right now. Please try again shortly.',
-                    'statusCode': 503
-                }
-            if not teaches_student:
-                return {
-                    'error': 'Forbidden',
-                    'message': "You do not have access to this student's badges",
-                    'statusCode': 403
-                }
+            # Checks the role before the course, so a student gets a 403 and
+            # an instructor who sends no course gets a 400.
+            from services.achieveup_service import require_course_instructor
+            _, error = await require_course_instructor(token, course_id, include_concluded=True)
+            if error:
+                return error
 
         # Get all badges for the student. A badge document only exists because
         # it already crossed its tier threshold at creation time (see

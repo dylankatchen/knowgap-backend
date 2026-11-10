@@ -60,7 +60,7 @@ Unless noted otherwise, AchieveUp endpoints require an `Authorization: Bearer <J
   - Progress:
     - `GET /achieveup/progress/<student_id>/<course_id>` - Gets a student's skill progress in a course.
   - Badges:
-    - `GET /achieveup/badges/student/<student_id>/earned` - Gets all badges a student has earned, with course information.
+    - `GET /achieveup/badges/student/<student_id>/earned` - Gets a student's earned badges with course information: all of them for the student themself, or one course's (`?course_id=`, required) for an instructor of that course.
     - `POST /achieveup/badges/share-profile` - Gets or creates a badge share link, for the caller or for a student an instructor teaches.
     - `GET /achieveup/badges/share-status` - Gets the caller's current share link and opt-out preference.
     - `POST /achieveup/badges/opt-out` - Turns off badge sharing for the caller.
@@ -75,8 +75,7 @@ Unless noted otherwise, AchieveUp endpoints require an `Authorization: Bearer <J
 - **Purpose**: Manages the curated list of videos for each skill in AchieveUp.
 - **Key Endpoints**:
   - `POST /achieveup/skill-videos/get` - Gets the curated video list for a skill.
-  - `POST /achieveup/skill-videos` - Instructor adds a video to a skill.
-  - `PUT /achieveup/skill-videos/<video_id>` - Instructor edits a video, or accepts an AI-suggested candidate.
+  - `POST /achieveup/skill-videos` - Instructor adds a YouTube video to a skill.
   - `DELETE /achieveup/skill-videos/<video_id>` - Instructor removes a video.
   - `POST /achieveup/skill-videos/suggest` - Instructor requests AI-suggested videos for a skill.
   - `POST /achieveup/skill-videos/<video_id>/find-moment` - Instructor finds the transcript moment most relevant to a video.

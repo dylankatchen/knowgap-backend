@@ -336,7 +336,8 @@ async def get_assigned_skills_route():
 
 @achieveup_bp.route('/achieveup/badges/student/<student_id>/earned', methods=['GET'])
 async def get_student_earned_badges_route(student_id):
-    """Get all earned badges for a specific student with course information. (AchieveUp only)"""
+    """Get a student's earned badges with course information: all of them for the
+    student themself, or one course's (?course_id=) for an instructor of it. (AchieveUp only)"""
     try:
         # Get token from Authorization header
         auth_header = request.headers.get('Authorization')
@@ -688,19 +689,13 @@ async def instructor_force_sync_route(course_id):
 
         token = auth_header.split(' ')[1]
 
-        # Verify instructor
-        from services.achieveup_auth_service import achieveup_verify_token, get_user_canvas_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return jsonify(user_result), user_result.get('statusCode', 401)
-
-        user = user_result['user']
-        if user.get('role') != 'instructor' or user.get('canvasTokenType') != 'instructor':
-            return jsonify({
-                'error': 'Forbidden',
-                'message': 'Instructor access required',
-                'statusCode': 403
-            }), 403
+        # The sync rebuilds the whole course's mastery from what the caller's
+        # Canvas token can see, so they must teach (or have taught) the course.
+        from services.achieveup_auth_service import get_user_canvas_token
+        from services.achieveup_service import require_course_instructor
+        user, error = await require_course_instructor(token, course_id, include_concluded=True)
+        if error:
+            return jsonify(error), error['statusCode']
 
         # Get the instructor's Canvas token
         canvas_token = await get_user_canvas_token(user['id'])
@@ -899,11 +894,8 @@ async def achieveup_ai_analyze_questions_route():
         elif len(questions) == 0:
             validation_errors.append("questions array cannot be empty")
         
-        # Make courseId and quizId optional with intelligent defaults
-        if not course_id:
-            logger.info("courseId not provided, will auto-detect from questions")
-            course_id = "unknown_course"  # Will be detected in service
-            
+        # courseId is checked by the service, which needs it to confirm the
+        # caller teaches the course. quizId is optional.
         if not quiz_id:
             logger.info("quizId not provided, using generic quiz ID")
             quiz_id = "generic_quiz"

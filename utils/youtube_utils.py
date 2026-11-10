@@ -9,6 +9,7 @@ import asyncio
 import html
 import logging
 import threading
+from urllib.parse import parse_qs, urlsplit
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
@@ -180,6 +181,59 @@ def extract_video_id(youtube_url):
     if match:
         video_id = match.group(1)
     return video_id
+
+
+_YOUTUBE_VIDEO_ID = re.compile(r'[0-9A-Za-z_-]{11}')
+_YOUTUBE_HOSTS = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com',
+                  'youtube-nocookie.com', 'www.youtube-nocookie.com'}
+_YOUTUBE_ID_PATHS = {'shorts', 'embed', 'live', 'v'}
+_YOUTUBE_START_TIME = re.compile(r'(?:(\d{1,3})h)?(?:(\d{1,5})m)?(?:(\d{1,6})s?)?')
+
+
+def normalize_youtube_link(link):
+    """Return https://www.youtube.com/watch?v=<id> (plus the start time, if
+    one was given) for a link to a YouTube video, or None for anything else.
+
+    The link is rebuilt from the video id instead of being stored as typed,
+    so no other part of the input (a javascript: link, another site, or a URL
+    a browser would read differently from Python) ever reaches the page."""
+    if not isinstance(link, str):
+        return None
+    link = link.strip()
+    if '://' not in link:
+        link = 'https://' + link  # pasted without http(s)://
+    try:
+        parts = urlsplit(link)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if parts.scheme not in ('http', 'https'):
+        return None
+
+    query = parse_qs(parts.query)
+    segments = parts.path.strip('/').split('/')
+    if host == 'youtu.be':
+        video_id = segments[0]
+    elif host in _YOUTUBE_HOSTS and parts.path.rstrip('/') == '/watch':
+        video_id = query.get('v', [''])[0]
+    elif host in _YOUTUBE_HOSTS and len(segments) >= 2 and segments[0] in _YOUTUBE_ID_PATHS:
+        video_id = segments[1]
+    else:
+        return None
+    if not _YOUTUBE_VIDEO_ID.fullmatch(video_id):
+        return None
+
+    normalized = f"https://www.youtube.com/watch?v={video_id}"
+    # Keep a start time like t=90, t=90s or t=1m30s (start=90 on embed links).
+    # Anything else, including absurdly long numbers, just drops the start time.
+    start = (query.get('t') or query.get('start') or [''])[0]
+    match = _YOUTUBE_START_TIME.fullmatch(start)
+    if start and match:
+        hours, minutes, seconds = (int(group or 0) for group in match.groups())
+        total = hours * 3600 + minutes * 60 + seconds
+        if total:
+            normalized += f"&t={total}s"
+    return normalized
 
 
 async def get_video_metadata(youtube_url):

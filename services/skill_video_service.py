@@ -20,7 +20,10 @@ from services.achieveup_service import (
     require_course_instructor
 )
 from utils.ai_utils import generate_skill_search_topics
-from utils.youtube_utils import fetch_videos_for_topic, get_video_metadata, fetch_video_transcript, fetch_videos_for_topic_and_channel
+from utils.youtube_utils import (
+    fetch_videos_for_topic, get_video_metadata, fetch_video_transcript,
+    fetch_videos_for_topic_and_channel, normalize_youtube_link
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,6 @@ def _serialize_video(doc):
         'thumbnail': doc.get('thumbnail'),
         'source': doc.get('source'),
         'status': doc.get('status'),
-        'added_by': doc.get('added_by'),
         'instructor_verified': doc.get('instructor_verified', False),
         'prioritize': doc.get('prioritize', False),
         'timestamp_seconds': doc.get('timestamp_seconds'),
@@ -65,9 +67,17 @@ def _display_rank(doc):
 
 
 async def _resolve_matrix_id(course_id: str, matrix_id: str, skill_name: str) -> str:
-    """Resolve a matrix_id for (course_id, skill_name) when the caller doesn't know it."""
+    """Return the matrix_id to use for (course_id, skill_name): the one sent,
+    or the course's matrix with that skill when none is sent.
+
+    A matrix from another course is ignored, as in analyze_questions_with_ai,
+    so videos can't be filed under it and its course name never reaches the
+    AI prompt. An id with no matrix behind it (one since deleted, or
+    'primary') is kept, so videos already saved under it still show."""
     if matrix_id:
-        return matrix_id
+        matrix = await achieveup_skill_matrices_collection.find_one({'_id': matrix_id}, {'course_id': 1})
+        if not matrix or str(matrix.get('course_id')) == str(course_id):
+            return matrix_id
 
     matrix = await achieveup_skill_matrices_collection.find_one({
         'course_id': course_id,
@@ -77,6 +87,24 @@ async def _resolve_matrix_id(course_id: str, matrix_id: str, skill_name: str) ->
         return matrix['_id']
 
     return 'primary'
+
+
+async def _get_video_for_course_instructor(token: str, video_id: str):
+    """Return (video, None) if the caller currently teaches the video's
+    course, otherwise (None, error)."""
+    user, error = await require_instructor(token)
+    if error:
+        return None, error
+
+    video = await skill_videos_collection.find_one({'_id': video_id})
+    if not video:
+        return None, {'error': 'Video not found', 'statusCode': 404}
+
+    error = await check_course_instructor(user, video['course_id'])
+    if error:
+        return None, error
+
+    return video, None
 
 
 async def get_skill_videos(token: str, course_id: str, skill_name: str, matrix_id: str = None) -> dict:
@@ -129,12 +157,17 @@ async def add_skill_video(token: str, course_id: str, skill_name: str, link: str
                            thumbnail: str = None, source: str = 'manual') -> dict:
     """Instructor adds a video to a skill's curated list."""
     try:
-        user, error = await require_instructor(token)
+        user, error = await require_course_instructor(token, course_id)
         if error:
             return error
 
+        link = normalize_youtube_link(link)
         if not link:
-            return {'error': 'Missing link', 'message': 'Video link is required', 'statusCode': 400}
+            return {
+                'error': 'Invalid video link',
+                'message': 'Enter a link to a YouTube video.',
+                'statusCode': 400
+            }
 
         resolved_matrix_id = await _resolve_matrix_id(course_id, matrix_id, skill_name)
 
@@ -152,7 +185,7 @@ async def add_skill_video(token: str, course_id: str, skill_name: str, link: str
             'matrix_id': resolved_matrix_id,
             'skill_name': skill_name,
             'title': title or 'Untitled Video',
-            'link': link.strip(),
+            'link': link,
             'channel': channel or 'Unknown Channel',
             'thumbnail': thumbnail or '',
             'source': source,
@@ -171,48 +204,14 @@ async def add_skill_video(token: str, course_id: str, skill_name: str, link: str
         return {'error': 'Internal server error', 'statusCode': 500}
 
 
-async def update_skill_video(token: str, video_id: str, updates: dict) -> dict:
-    """Instructor edits a video, or accepts an AI-suggested candidate by flipping its status."""
-    try:
-        _, error = await require_instructor(token)
-        if error:
-            return error
-
-        allowed_fields = {'title', 'link', 'channel', 'thumbnail', 'status'}
-        set_fields = {k: v for k, v in (updates or {}).items() if k in allowed_fields}
-
-        if not set_fields:
-            return {'error': 'No valid fields to update', 'statusCode': 400}
-
-        set_fields['updated_at'] = _now()
-
-        result = await skill_videos_collection.find_one_and_update(
-            {'_id': video_id},
-            {'$set': set_fields},
-            return_document=True
-        )
-
-        if not result:
-            return {'error': 'Video not found', 'statusCode': 404}
-
-        return _serialize_video(result)
-
-    except Exception as e:
-        logger.error(f"Update skill video error: {str(e)}")
-        return {'error': 'Internal server error', 'statusCode': 500}
-
-
 async def remove_skill_video(token: str, video_id: str) -> dict:
     """Instructor removes a video and its votes."""
     try:
-        _, error = await require_instructor(token)
+        _, error = await _get_video_for_course_instructor(token, video_id)
         if error:
             return error
 
-        result = await skill_videos_collection.delete_one({'_id': video_id})
-        if result.deleted_count == 0:
-            return {'error': 'Video not found', 'statusCode': 404}
-
+        await skill_videos_collection.delete_one({'_id': video_id})
         await skill_video_votes_collection.delete_many({'video_id': video_id})
 
         return {'success': True, 'message': 'Video removed successfully'}
@@ -226,13 +225,9 @@ async def verify_ai_video(token: str, video_id: str) -> dict:
     """Instructor marks an AI-suggested video as reviewed/approved — this is distinct
     from `source` (who added it) so it doesn't change source-gated behavior."""
     try:
-        _, error = await require_instructor(token)
+        video, error = await _get_video_for_course_instructor(token, video_id)
         if error:
             return error
-
-        video = await skill_videos_collection.find_one({'_id': video_id})
-        if not video:
-            return {'error': 'Video not found', 'statusCode': 404}
 
         if video.get('source') != 'ai_suggested':
             return {
@@ -518,15 +513,7 @@ async def find_relevant_moment(token: str, video_id: str) -> dict:
     """Instructor opt-in: find the transcript moment most relevant to a
     video's skill, and store it as a deep-link timestamp."""
     try:
-        user, error = await require_instructor(token)
-        if error:
-            return error
-
-        video = await skill_videos_collection.find_one({'_id': video_id})
-        if not video:
-            return {'error': 'Video not found', 'statusCode': 404}
-
-        error = await check_course_instructor(user, video['course_id'])
+        video, error = await _get_video_for_course_instructor(token, video_id)
         if error:
             return error
 

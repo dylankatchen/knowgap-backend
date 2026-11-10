@@ -40,64 +40,66 @@ MAX_COURSE_DESCRIPTION_LENGTH = 12000
 async def create_skill_matrix(token: str, course_id: str, matrix_name: str, skills: list) -> dict:
     """Create skill matrix for a course."""
     try:
-        # Verify user token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
-        
-        # Get user info and verify instructor access
-        user = user_result['user']
-        user_role = user['role']
-        canvas_token_type = user.get('canvasTokenType', 'student')
-        
-        # Verify instructor access (consistent with other endpoints)
-        if user_role != 'instructor' or canvas_token_type != 'instructor':
-            return {
-                'error': 'Access denied',
-                'message': 'Instructor access required',
-                'statusCode': 403
-            }
-        # Check if matrix name already exists for this course (allow multiple matrices per course)
-        existing_matrix = await achieveup_skill_matrices_collection.find_one({
-            'course_id': course_id, 
-            'matrix_name': matrix_name
-        })
-        if existing_matrix:
-            return {
-                'error': 'Matrix name already exists',
-                'message': f'A skill matrix with the name \'{matrix_name}\' already exists for this course',
-                'statusCode': 409
-            }
-        
-        # Create matrix document
-        matrix_id = str(uuid.uuid4())
-        matrix_doc = {
-            '_id': matrix_id,
-            'course_id': course_id,
-            'matrix_name': matrix_name,
-            'skills': skills,
-            'created_at': datetime.now(timezone.utc).replace(tzinfo=None),
-            'updated_at': datetime.now(timezone.utc).replace(tzinfo=None),
-            'created_by': user['id']
-        }
-        
-        # Insert into database
-        await achieveup_skill_matrices_collection.insert_one(matrix_doc)
-        
-        return matrix_doc
-        
+        user, error = await require_course_instructor(token, course_id)
+        if error:
+            return error
+
+        return await _insert_skill_matrix(course_id, matrix_name, skills, user['id'])
+
     except Exception as e:
         logger.error(f"Create skill matrix error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
 
+async def _insert_skill_matrix(course_id: str, matrix_name: str, skills: list, created_by: str) -> dict:
+    """Save a new matrix. No auth or Canvas checks, so callers do their own."""
+    # Check if matrix name already exists for this course (allow multiple matrices per course)
+    existing_matrix = await achieveup_skill_matrices_collection.find_one({
+        'course_id': course_id,
+        'matrix_name': matrix_name
+    })
+    if existing_matrix:
+        return {
+            'error': 'Matrix name already exists',
+            'message': f'A skill matrix with the name \'{matrix_name}\' already exists for this course',
+            'statusCode': 409
+        }
+
+    # Create matrix document
+    matrix_id = str(uuid.uuid4())
+    matrix_doc = {
+        '_id': matrix_id,
+        'course_id': course_id,
+        'matrix_name': matrix_name,
+        'skills': skills,
+        'created_at': datetime.now(timezone.utc).replace(tzinfo=None),
+        'updated_at': datetime.now(timezone.utc).replace(tzinfo=None),
+        'created_by': created_by
+    }
+
+    # Insert into database
+    await achieveup_skill_matrices_collection.insert_one(matrix_doc)
+
+    return matrix_doc
+
 async def update_skill_matrix(token: str, matrix_id: str, skills: list, matrix_name: str) -> dict:
     """Update skill matrix."""
     try:
-        # Verify user token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
-        
+        user, error = await require_instructor(token)
+        if error:
+            return error
+
+        matrix = await achieveup_skill_matrices_collection.find_one({'_id': matrix_id})
+        if not matrix:
+            return {
+                'error': 'Matrix not found',
+                'message': 'Skill matrix not found',
+                'statusCode': 404
+            }
+
+        error = await check_course_instructor(user, matrix['course_id'])
+        if error:
+            return error
+
         # Update matrix
         result = await achieveup_skill_matrices_collection.update_one(
             {'_id': matrix_id},
@@ -130,24 +132,11 @@ async def update_skill_matrix(token: str, matrix_id: str, skills: list, matrix_n
 async def get_all_skill_matrices_by_course(token: str, course_id: str) -> dict:
     """Get ALL skill matrices for a course (for frontend matrix selection)."""
     try:
-        # Verify user token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
-        
-        # Get user info from the correct structure
-        user = user_result['user']
-        user_id = user['id']
-        user_role = user['role']
-        canvas_token_type = user.get('canvasTokenType', 'student')
-        
-        # Verify instructor access (consistent with other endpoints)
-        if user_role != 'instructor' or canvas_token_type != 'instructor':
-            return {
-                'error': 'Access denied',
-                'message': 'Instructor access required',
-                'statusCode': 403
-            }
+        # Read-only, so a past course the instructor taught is allowed
+        # (viewing old matrices and importing them into a new term).
+        _, error = await require_course_instructor(token, course_id, include_concluded=True)
+        if error:
+            return error
         
         # ENHANCED DEBUG LOGGING FOR MATRIX RETRIEVAL
         logger.info(f"DEBUG: Searching for matrices with course_id='{course_id}' (type: {type(course_id)})")
@@ -309,34 +298,46 @@ async def upsert_course_description(token: str, course_id: str, description: str
 async def assign_skills_to_questions(token: str, course_id: str, question_skills: dict) -> dict:
     """Assign skills to quiz questions."""
     try:
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
+        user, error = await require_course_instructor(token, course_id)
+        if error:
+            return error
 
-        # Retrieve user id to assign ownership to skill assignments
-        user_id = user_result['user']['id']
-
-        for question_text, skills in question_skills.items():
-            question_hash = text_utils.hash_text(question_text)
-
-            assignment_doc = {
-                'question_id': question_hash,
-                'owner_id': user_id,
-                'skills': skills,
-                'assigned_at': datetime.now(timezone.utc).replace(tzinfo=None)
+        # Each question maps to a list of skill names. Mastery uses every
+        # skill as a lookup key and database value, so anything that isn't a
+        # string (an object, number or null) would break or alter it.
+        if not isinstance(question_skills, dict) or not all(
+                isinstance(skills, list) and all(isinstance(skill, str) for skill in skills)
+                for skills in question_skills.values()):
+            return {
+                'error': 'Invalid skill mappings',
+                'message': 'Each question must map to a list of skill names.',
+                'statusCode': 400
             }
 
-            await achieveup_question_skills_collection.update_one(
-                {'question_id': question_hash, 'owner_id': user_id},
-                {'$set': assignment_doc, '$addToSet': {'course_ids': course_id}},
-                upsert=True
-            )
-
+        await _save_question_skills(user['id'], course_id, question_skills)
         return {'message': 'Skills assigned successfully'}
 
     except Exception as e:
         logger.error(f"Assign skills error: {str(e)}")
         return {'error': 'Internal server error', 'statusCode': 500}
+
+async def _save_question_skills(user_id: str, course_id: str, question_skills: dict) -> None:
+    """Save question-to-skill mappings. No auth or Canvas checks, so callers do their own."""
+    for question_text, skills in question_skills.items():
+        question_hash = text_utils.hash_text(question_text)
+
+        assignment_doc = {
+            'question_id': question_hash,
+            'owner_id': user_id,
+            'skills': skills,
+            'assigned_at': datetime.now(timezone.utc).replace(tzinfo=None)
+        }
+
+        await achieveup_question_skills_collection.update_one(
+            {'question_id': question_hash, 'owner_id': user_id},
+            {'$set': assignment_doc, '$addToSet': {'course_ids': course_id}},
+            upsert=True
+        )
     
 async def get_assigned_skills(token: str, course_id: str, question_ids:list[str]) -> dict:
     """Get skill assigned for a quiz."""
@@ -389,11 +390,19 @@ async def get_assigned_skills(token: str, course_id: str, question_ids:list[str]
 async def get_student_progress(token: str, student_id: str, course_id: str) -> dict:
     """Get skill progress for a student in a course."""
     try:
-        # Verify user token
         user_result = await achieveup_verify_token(token)
         if 'error' in user_result:
             return user_result
-        
+
+        # Students may read their own progress. Anyone else must be an
+        # instructor who teaches (or taught) the course. An account with no
+        # Canvas id saved is never treated as the student being asked about.
+        own_id = user_result['user'].get('canvas_student_id')
+        if own_id is None or str(own_id) != str(student_id):
+            _, error = await require_course_instructor(token, course_id, include_concluded=True)
+            if error:
+                return error
+
         # Find progress
         progress = await achieveup_progress_collection.find_one({
             'student_id': student_id,
@@ -464,18 +473,10 @@ async def get_instructor_dashboard(token: str) -> dict:
                 break
             student_ids.update(student['id'] for student in students_result)
 
-        # Get skill matrices count
-        matrices_count = await achieveup_skill_matrices_collection.count_documents({})
-        
-        # Get recent activity
-        recent_matrices = await achieveup_skill_matrices_collection.find({}).sort([('created_at', -1)]).limit(5).to_list(length=5)
-        
         dashboard_data = {
             'courses': courses,
             'students': None if roster_failed else len(student_ids),
             'totalCourses': len(courses),
-            'totalSkillMatrices': matrices_count,
-            'recentMatrices': recent_matrices,
             'lastUpdated': datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         }
         
@@ -518,13 +519,10 @@ async def get_instructor_course_students(token: str, course_id: str) -> dict:
 async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
     """Generate AI-powered skill suggestions for a course."""
     try:
-        # Verify user token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
+        user, error = await require_instructor(token)
+        if error:
+            return error
 
-        user = user_result['user']
-        
         import json
 
         course_name = course_data.get('courseName', '')
@@ -606,18 +604,21 @@ async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
 async def analyze_questions_with_ai(token: str, questions: list, course_id: str, matrix_id: str = None) -> dict:
     """Analyze questions using AI for complexity and skill mapping."""
     try:
-        # Verify user token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
-        
+        _, error = await require_course_instructor(token, course_id)
+        if error:
+            return error
+
         course_skills = []
         matrix_used = None
-        
+
         # Priority 1: Use the specified matrix_id if provided
         if matrix_id:
             logger.info(f"Using specified matrix_id: {matrix_id}")
             matrix = await achieveup_skill_matrices_collection.find_one({'_id': matrix_id})
+            # A matrix from another course is treated as not found, so it
+            # can't be read through a course the caller does teach.
+            if matrix and str(matrix.get('course_id')) != str(course_id):
+                matrix = None
             if matrix and 'skills' in matrix:
                 course_skills = matrix['skills']
                 matrix_used = matrix.get('matrix_name', matrix_id)
@@ -672,17 +673,21 @@ async def analyze_questions_with_ai(token: str, questions: list, course_id: str,
 async def delete_skill_matrix(token: str, matrix_id: str) -> dict:
     """Delete a skill matrix by ID."""
     try:
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
+        user, error = await require_instructor(token)
+        if error:
+            return error
 
-        user = user_result['user']
-        if user['role'] != 'instructor' or user.get('canvasTokenType') != 'instructor':
+        matrix = await achieveup_skill_matrices_collection.find_one({'_id': matrix_id})
+        if not matrix:
             return {
-                'error': 'Access denied',
-                'message': 'Instructor access required',
-                'statusCode': 403
+                'error': 'Matrix not found',
+                'message': 'Skill matrix does not exist',
+                'statusCode': 404
             }
+
+        error = await check_course_instructor(user, matrix['course_id'])
+        if error:
+            return error
 
         result = await achieveup_skill_matrices_collection.delete_one({
             '_id': matrix_id
@@ -702,9 +707,17 @@ async def delete_skill_matrix(token: str, matrix_id: str) -> dict:
         return {'error': 'Internal server error', 'statusCode': 500}
 
 async def import_matrices_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
-    
+    # The target is written to, so the user must teach it now. The source
+    # is only read; get_all_skill_matrices_by_course checks it and allows
+    # a past course they taught. Both checks run before anything is saved.
+    user, error = await require_course_instructor(token, target_course_id)
+    if error:
+        return error
+
     source_matrices = await get_all_skill_matrices_by_course(token,source_course_id)
-    
+    if 'error' in source_matrices:
+        return source_matrices
+
     if not source_matrices:
         return {
             'error': 'No matrices found',
@@ -717,7 +730,7 @@ async def import_matrices_from_course(source_course_id: str, target_course_id: s
     for matrix in matrices:
         matrix_name = matrix.get('matrix_name') + ' (Imported Skills Matrix)'
         skills = matrix.get('skills', []) or []
-        created = await create_skill_matrix(token, target_course_id,matrix_name, skills)
+        created = await _insert_skill_matrix(target_course_id, matrix_name, skills, user['id'])
         imported.append(created)
 
     await achieveup_import_status_collection.update_one(
@@ -755,17 +768,11 @@ def normalize_text(text: str) -> str:
 async def import_skill_setting_from_course(source_course_id: str, target_course_id: str, user_id: str, token: str):
     """Import question skill assignments from source course to target course by matching quiz names and question text."""
     try:
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
-
-        user = user_result['user']
-        if user['role'] != 'instructor' or user.get('canvasTokenType') != 'instructor':
-            return {
-                'error': 'Access denied',
-                'message': 'Instructor access required',
-                'statusCode': 403
-            }
+        # Mappings are saved to the target, so the user must teach it now.
+        # Checked once here rather than on every quiz's save below.
+        user, error = await require_course_instructor(token, target_course_id)
+        if error:
+            return error
 
         from services.achieveup_auth_service import get_user_canvas_token
         from services.achieveup_canvas_service import get_instructor_quiz_questions, get_instructor_course_quizzes
@@ -877,14 +884,7 @@ async def import_skill_setting_from_course(source_course_id: str, target_course_
                 quiz_imported_count += 1
 
             if target_question_skills:
-                save_result = await assign_skills_to_questions(token, target_course_id, target_question_skills)
-                if 'error' in save_result:
-                    details.append({
-                        'quiz_title': source_quiz_title,
-                        'status': 'failed',
-                        'reason': save_result.get('message', save_result.get('error'))
-                    })
-                    continue
+                await _save_question_skills(user['id'], target_course_id, target_question_skills)
 
                 imported_count += len(target_question_skills)
                 matched_questions += quiz_imported_count
@@ -965,9 +965,25 @@ async def get_import_status(token: str, course_id: str) -> dict:
         return {'error': 'Internal server error', 'statusCode': 500}
     
 
-async def check_course_instructor(user: dict, course_id: str):
+async def check_course_instructor(user: dict, course_id: str, include_concluded: bool = False):
     """Return None if Canvas confirms the (already verified) instructor
-    teaches the course, otherwise an error dict."""
+    teaches the course, otherwise an error dict. include_concluded also
+    accepts a course they taught in a past term; use it only for reads."""
+    if course_id is None or course_id == '':
+        return {
+            'error': 'Missing course ID',
+            'message': 'Course ID is required.',
+            'statusCode': 400
+        }
+    # Canvas course ids are plain digits. Anything else (e.g. '.?' or
+    # '1/../2') would change which Canvas URL gets checked.
+    if not re.fullmatch(r'[0-9]+', str(course_id)):
+        return {
+            'error': 'Invalid course ID',
+            'message': 'Course ID must be a number.',
+            'statusCode': 400
+        }
+
     canvas_token = await get_user_canvas_token(user['id'])
     if not canvas_token:
         return {
@@ -977,7 +993,7 @@ async def check_course_instructor(user: dict, course_id: str):
         }
 
     course_check = await validate_canvas_instructor_for_course(
-        canvas_token, str(course_id))
+        canvas_token, str(course_id), include_concluded)
     if not course_check.get('valid'):
         # Only a denial is a 403. Canvas outages (502/503) and token
         # problems (400) keep their own status.
@@ -990,14 +1006,15 @@ async def check_course_instructor(user: dict, course_id: str):
     return None
 
 
-async def require_course_instructor(token: str, course_id: str):
+async def require_course_instructor(token: str, course_id: str, include_concluded: bool = False):
     """Return (user, None) if the user is an instructor Canvas confirms
-    teaches the course, otherwise (None, error_dict)."""
+    teaches the course, otherwise (None, error_dict). See
+    check_course_instructor for include_concluded."""
     user, error = await require_instructor(token)
     if error:
         return None, error
 
-    error = await check_course_instructor(user, course_id)
+    error = await check_course_instructor(user, course_id, include_concluded)
     if error:
         return None, error
     return user, None
@@ -1018,7 +1035,8 @@ async def get_course_channels(token: str, course_id: str) -> list | dict:
     saved), or an error dict if the user can't access the course.
     """
     try:
-        user, error = await require_course_instructor(token, course_id)
+        # Read-only, so a past course the instructor taught is allowed.
+        user, error = await require_course_instructor(token, course_id, include_concluded=True)
         if error:
             return error
 

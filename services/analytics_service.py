@@ -19,12 +19,13 @@ achieveup_user_badges_collection = db[Config.ACHIEVEUP_USER_BADGES_COLLECTION]
 async def get_course_students_analytics(token: str, course_id: str, time_range: str = '30d', skill_id: str = None) -> dict:
     """Get comprehensive analytics for all students in a course."""
     try:
-        # Verify user token
-        from services.achieveup_auth_service import achieveup_verify_token
-        user_result = await achieveup_verify_token(token)
-        if 'error' in user_result:
-            return user_result
-        
+        # Class-wide data, so only an instructor who teaches (or taught) the
+        # course. Checked first: Canvas lets students list their own roster.
+        from services.achieveup_service import require_course_instructor
+        _, error = await require_course_instructor(token, course_id, include_concluded=True)
+        if error:
+            return error
+
         # Use explicit collection names
         skill_matrices_collection = db[Config.ACHIEVEUP_SKILL_MATRICES_COLLECTION]
         mastery_collection = db[Config.ACHIEVEUP_STUDENT_SKILL_MASTERY_COLLECTION]
