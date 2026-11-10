@@ -1,6 +1,17 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+
+def setUpModule():
+    # These tests call rate-limited routes more often than the limits allow,
+    # and the limiter's counts are shared by every test. The limits have
+    # their own tests in test_rate_limits.py.
+    from app import app
+    limiter_off = patch.dict(app.config, {'QUART_RATE_LIMITER_ENABLED': False})
+    limiter_off.start()
+    unittest.addModuleCleanup(limiter_off.stop)
+
+
 # Spaces and capitals must reach the service as sent: the check only rejects
 # values that aren't text, it doesn't clean them up.
 EMAIL = ' Ann@UCF.edu '

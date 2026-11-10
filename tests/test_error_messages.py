@@ -4,6 +4,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services import achieveup_service
 from utils import youtube_utils
 
+
+def setUpModule():
+    # These tests call rate-limited routes more often than the limits allow,
+    # and the limiter's counts are shared by every test. The limits have
+    # their own tests in test_rate_limits.py.
+    from app import app
+    limiter_off = patch.dict(app.config, {'QUART_RATE_LIMITER_ENABLED': False})
+    limiter_off.start()
+    unittest.addModuleCleanup(limiter_off.stop)
+
+
 SECRET = 'secret internal detail'
 
 
@@ -50,7 +61,11 @@ class ErrorMessageTest(unittest.IsolatedAsyncioTestCase):
             ('post', '/auth/validate-canvas-token', {'canvasApiToken': 'x' * 64},
              'services.achieveup_canvas_service.validate_canvas_token'),
         ]
-        with self.assertLogs('routes.auth_routes', 'ERROR') as logs:
+        # Token validation needs a login, so the caller is logged in for every
+        # route; /auth/me's own patch below makes the login check itself fail.
+        logged_in = AsyncMock(return_value={'user': {'id': 'u1'}})
+        with self.assertLogs('routes.auth_routes', 'ERROR') as logs, \
+             patch('routes.auth_routes.achieveup_verify_token', logged_in):
             for method, path, body, target in routes:
                 with self.subTest(path=path), patch(target, failing):
                     response = await getattr(app.test_client(), method)(
@@ -62,7 +77,7 @@ class ErrorMessageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(SECRET in line for line in logs.output), len(routes))
 
     async def test_skill_suggestions_hide_exception_text(self):
-        with patch('services.achieveup_service.require_instructor', AsyncMock(side_effect=Exception(SECRET))), \
+        with patch('services.achieveup_service.require_course_instructor', AsyncMock(side_effect=Exception(SECRET))), \
              patch('traceback.print_exc'), \
              self.assertLogs('services.achieveup_service', 'ERROR') as logs:
             result = await achieveup_service.suggest_course_skills_ai('t', {})

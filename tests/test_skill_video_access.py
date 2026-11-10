@@ -8,6 +8,17 @@ from services import skill_video_service
 from utils import youtube_utils
 from utils.youtube_utils import normalize_youtube_link
 
+
+def setUpModule():
+    # These tests call rate-limited routes more often than the limits allow,
+    # and the limiter's counts are shared by every test. The limits have
+    # their own tests in test_rate_limits.py.
+    from app import app
+    limiter_off = patch.dict(app.config, {'QUART_RATE_LIMITER_ENABLED': False})
+    limiter_off.start()
+    unittest.addModuleCleanup(limiter_off.stop)
+
+
 VIDEO_ID = 'dQw4w9WgXcQ'
 CLEAN_LINK = f'https://www.youtube.com/watch?v={VIDEO_ID}'
 

@@ -1,4 +1,5 @@
 from quart import Blueprint, request, jsonify
+from quart_rate_limiter import rate_limit
 import asyncio
 from services.achieveup_service import (
     create_skill_matrix,
@@ -14,6 +15,12 @@ from services.achieveup_service import (
     update_course_channels
 )
 import logging
+from utils.rate_limits import PAID_API_LIMITS
+
+# The rate limit counts requests, but analysis makes one OpenAI call per 20
+# questions, so an uncapped list would let one request make hundreds of
+# calls. Far above any real quiz.
+MAX_QUESTIONS_PER_ANALYSIS = 500
 
 achieveup_bp = Blueprint('achieveup', __name__)
 logger = logging.getLogger(__name__)
@@ -614,6 +621,7 @@ async def get_channels_endpoint(course_id):
 
 
 @achieveup_bp.route('/achieveup/instructor/courses/<course_id>/channels', methods=['PUT'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def update_channels_endpoint(course_id):
     """
     Save or update preferred YouTube channels for a course.
@@ -675,6 +683,7 @@ async def update_channels_endpoint(course_id):
         }), 500
 
 @achieveup_bp.route('/achieveup/instructor/course/<course_id>/force-sync', methods=['POST'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def instructor_force_sync_route(course_id):
     """Force a data sync for a specific course (instructor only).
     Triggers Canvas submission fetch → mastery update → progress update immediately."""
@@ -762,6 +771,7 @@ async def instructor_dashboard_route():
 
 
 @achieveup_bp.route('/achieveup/ai/suggest-skills', methods=['POST'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def achieveup_ai_suggest_skills_route():
     """AI-powered skill suggestions for course (frontend-requested endpoint). (AchieveUp only)"""
     try:
@@ -855,6 +865,7 @@ async def achieveup_ai_suggest_skills_route():
         }), 500
 
 @achieveup_bp.route('/achieveup/ai/analyze-questions', methods=['POST'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def achieveup_ai_analyze_questions_route():
     """AI-powered question analysis (frontend-requested endpoint). (AchieveUp only)"""
     try:
@@ -893,6 +904,9 @@ async def achieveup_ai_analyze_questions_route():
             validation_errors.append("questions array is required")
         elif len(questions) == 0:
             validation_errors.append("questions array cannot be empty")
+        elif len(questions) > MAX_QUESTIONS_PER_ANALYSIS:
+            validation_errors.append(
+                f"questions array cannot have more than {MAX_QUESTIONS_PER_ANALYSIS} questions")
         
         # courseId is checked by the service, which needs it to confirm the
         # caller teaches the course. quizId is optional.

@@ -519,7 +519,11 @@ async def get_instructor_course_students(token: str, course_id: str) -> dict:
 async def suggest_course_skills_ai(token: str, course_data: dict) -> dict:
     """Generate AI-powered skill suggestions for a course."""
     try:
-        user, error = await require_instructor(token)
+        # OpenAI calls cost money, so only an instructor of the course may
+        # make them. A past course they taught is allowed: nothing is saved,
+        # and the matrix creator lists past courses too.
+        user, error = await require_course_instructor(
+            token, course_data.get('courseId'), include_concluded=True)
         if error:
             return error
 

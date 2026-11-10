@@ -37,5 +37,6 @@ bcrypt==4.1.2
 # Flask and Quart Dependencies
 quart==0.19.8
 quart-cors==0.7.0
+quart-rate-limiter==0.12.1
 werkzeug==3.0.0
 hypercorn 

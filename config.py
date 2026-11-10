@@ -48,8 +48,16 @@ class Config:
 
     # Public address of the AchieveUp frontend, used to build links people copy and share
     # (e.g. badge share links). Set to http://localhost:3000 in .env for local development.
-    FRONTEND_URL = os.getenv("FRONTEND_URL", "https://achieveupapp.com").rstrip("/")
-    FRONTEND_HOSTING_URL = os.getenv("FRONTEND_HOSTING_URL", FRONTEND_URL).rstrip("/")
+    # Both are also the only sites allowed to call the API from a browser (CORS),
+    # where they must match the browser's Origin exactly, so stray spaces and
+    # empty values are cleaned up here.
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip().rstrip("/") or "https://achieveupapp.com"
+    FRONTEND_HOSTING_URL = os.getenv("FRONTEND_HOSTING_URL", "").strip().rstrip("/") or FRONTEND_URL
+
+    # True on Heroku, which sets DYNO on every dyno. Heroku's router passes on
+    # the visitor's address and scheme in X-Forwarded-* headers; anywhere else
+    # those headers come straight from the client, so they're ignored.
+    BEHIND_PROXY = bool(os.getenv("DYNO"))
 
     # Canvas API Configuration
 

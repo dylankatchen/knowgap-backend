@@ -6,6 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services import achieveup_service
 from services import analytics_service
 
+
+def setUpModule():
+    # These tests call rate-limited routes more often than the limits allow,
+    # and the limiter's counts are shared by every test. The limits have
+    # their own tests in test_rate_limits.py.
+    from app import app
+    limiter_off = patch.dict(app.config, {'QUART_RATE_LIMITER_ENABLED': False})
+    limiter_off.start()
+    unittest.addModuleCleanup(limiter_off.stop)
+
+
 INSTRUCTOR = {'id': 'inst-1', 'role': 'instructor', 'canvasTokenType': 'instructor', 'canvas_student_id': 900}
 STUDENT = {'id': 'stu-1', 'role': 'student', 'canvasTokenType': 'student', 'canvas_student_id': 555}
 NO_CANVAS_ID = {'id': 'stu-2', 'role': 'student', 'canvasTokenType': 'student', 'canvas_student_id': None}

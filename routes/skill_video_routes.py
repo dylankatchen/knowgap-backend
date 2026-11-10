@@ -1,5 +1,6 @@
 # routes/skill_video_routes.py
 from quart import Blueprint, request, jsonify
+from quart_rate_limiter import rate_limit
 import logging
 
 from services.skill_video_service import (
@@ -12,6 +13,7 @@ from services.skill_video_service import (
     verify_ai_video,
 )
 from utils.request_utils import not_text_response
+from utils.rate_limits import PAID_API_LIMITS
 
 skill_video_bp = Blueprint('skill_video', __name__)
 logger = logging.getLogger(__name__)
@@ -79,6 +81,7 @@ async def get_skill_videos_route():
 
 
 @skill_video_bp.route('/achieveup/skill-videos', methods=['POST'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def add_skill_video_route():
     """Instructor adds a video to a skill's curated list. (AchieveUp only)"""
     try:
@@ -128,6 +131,7 @@ async def remove_skill_video_route(video_id):
 
 
 @skill_video_bp.route('/achieveup/skill-videos/suggest', methods=['POST'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def suggest_candidate_videos_route():
     """Instructor requests AI-suggested candidate videos for a skill. (AchieveUp only)"""
     try:
@@ -159,6 +163,7 @@ async def suggest_candidate_videos_route():
 
 
 @skill_video_bp.route('/achieveup/skill-videos/<video_id>/find-moment', methods=['POST'])
+@rate_limit(limits=PAID_API_LIMITS)
 async def find_relevant_moment_route(video_id):
     """Instructor opt-in: find the transcript moment most relevant to a
     video, manual or AI-suggested. (AchieveUp only)"""

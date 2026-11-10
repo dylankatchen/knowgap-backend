@@ -14,6 +14,8 @@ from routes.canvas_routes import canvas_bp
 from routes.achieveup_routes import achieveup_bp
 from routes.skill_video_routes import skill_video_bp
 from mongodb import get_db
+from utils.security_utils import init_security
+from utils.rate_limits import init_rate_limits
 
 from config import Config
 
@@ -25,8 +27,10 @@ logger = logging.getLogger(__name__)
 # Initialize Quart app
 app = Quart(__name__)
 
-# Configure CORS
-app = cors(app, 
+# Configure CORS. Only these sites may call the API from a browser; the
+# frontend sends its login token in the Authorization header, not a cookie,
+# so credentials aren't allowed.
+app = cors(app,
     allow_origin=[
         "http://localhost:3000",  # Allow AchieveUp frontend development
         "http://localhost:5001",  # Allow local API testing
@@ -36,32 +40,20 @@ app = cors(app,
     ],
     allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_credentials=True,
+    expose_headers=["Retry-After"],  # how long a rate-limited caller should wait
+    allow_credentials=False,
     max_age=3600
 )
-
-# Custom CORS middleware for additional headers
-@app.after_request
-async def after_request(response):
-    origin = request.headers.get("Origin")
-    if origin:
-        # Echo back the requesting origin
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Vary"] = "Origin"
-    else:
-        # Fallback for non-browser requests
-        response.headers["Access-Control-Allow-Origin"] = "*"
-
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization,Accept,Origin,X-Requested-With"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Max-Age"] = "3600"
-    return response
 
 # Log incoming requests
 @app.before_request
 async def log_request():
     logger.info("%s %s", request.method, request.path)
+
+# HTTPS redirect and security headers first, so a plain-HTTP request is
+# redirected before the rate limiter counts it.
+init_security(app)
+init_rate_limits(app)
 
 # Initialize routes first
 init_base_routes(app)
