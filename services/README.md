@@ -34,7 +34,7 @@ The `services` directory is responsible for handling the core business logic and
   - **`import_matrices_from_course(...)`**: Copies skill matrices from one course to another.
 
 ### 5. `achieveup_ai_service.py`
-- **Purpose**: Uses a UCF-managed Google Gemma AI model to classify quiz questions into the skills of a skill matrix.
+- **Purpose**: Uses OpenAI to classify quiz questions into the skills of a skill matrix.
 - **Key Functions**:
   - **`analyze_questions(questions_data, course_skills)`**: Analyzes questions in batches and returns suggested skills for each.
 

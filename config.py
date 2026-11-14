@@ -14,6 +14,7 @@ class Config:
     HEX_ENCRYPTION_KEY = os.getenv("HEX_ENCRYPTION_KEY")
     
     # API keys
+    OPENAI_KEY = os.getenv("OPENAI_KEY")
     YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
     # Environment-based database selection
@@ -65,9 +66,7 @@ class Config:
     # Canvas API Configuration
 
     #AI configuration
-    # UCF AI gateway (Portkey), used for Gemma
-    AI_API_KEY = os.getenv("AI_API_KEY")
-    AI_API_URL = os.getenv("AI_API_URL")
+    OPENAI_API_KEY= os.getenv("OPENAI_KEY")
     # Feature Flags
     ENABLE_SUBMISSION_CACHE = os.getenv("ENABLE_SUBMISSION_CACHE", "false").lower() == "true"  # Default to false to minimize storage
 
@@ -80,7 +79,7 @@ class Config:
         missing = [
             var for var in [
                 "DB_CONNECTION_STRING", "HEX_ENCRYPTION_KEY", 
-                "YOUTUBE_API_KEY", "AI_API_KEY", "AI_API_URL", "ACHIEVEUP_JWT_SECRET"
+                "OPENAI_KEY", "YOUTUBE_API_KEY", "ACHIEVEUP_JWT_SECRET"
             ]
             if not getattr(cls, var)
         ]

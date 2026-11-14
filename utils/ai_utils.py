@@ -1,14 +1,13 @@
 # Import necessary libraries
-from portkey_ai import AsyncPortkey
+from openai import AsyncOpenAI
 from config import Config
-# Initialize the AI client shared by all AI calls: Gemma through the UCF AI gateway (Portkey)
-client = AsyncPortkey(base_url=Config.AI_API_URL, api_key=Config.AI_API_KEY)
-AI_MODEL = "@orion-gpu-cluster/gemma-4-31b-it"
+# Initialize OpenAI client with your API key
+client = AsyncOpenAI(api_key=Config.OPENAI_KEY)
 
 # Define the coroutine for generating YouTube search topics for a skill
 async def generate_skill_search_topics(skill_name, course_name, course_context="", sample_questions=None):
     """
-    Generate 1-3 concise YouTube search phrases for a skill using the configured AI model.
+    Generate 1-3 concise YouTube search phrases for a skill using GPT.
 
     Parameters:
     - skill_name (str): The name of the skill.
@@ -37,9 +36,9 @@ async def generate_skill_search_topics(skill_name, course_name, course_context="
 
     try:
         response = await client.chat.completions.create(
-            model=AI_MODEL,
+            model="gpt-4o-mini",
             messages=messages,
-            max_tokens=10000,
+            max_completion_tokens=10000,
             top_p=0.5
         )
 
